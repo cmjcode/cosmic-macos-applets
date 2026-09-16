@@ -47,6 +47,13 @@ pub struct ActiveAppConfig {
     pub empty_label: String,
     /// Only consider windows on the output this panel instance lives on.
     pub follow_panel_output: bool,
+    /// Experimental global application menu (File, Edit, View…).
+    ///
+    /// Hosts `com.canonical.AppMenu.Registrar`. Apps that support it (Qt, and
+    /// X11 apps such as Electron with `--ozone-platform=x11` or JetBrains IDEs)
+    /// then move their menu bar into the panel. Apps only notice the registrar
+    /// when they start, so restart them after enabling.
+    pub global_menu: bool,
 }
 
 impl Default for ActiveAppConfig {
@@ -56,6 +63,7 @@ impl Default for ActiveAppConfig {
             bold: true,
             empty_label: String::new(),
             follow_panel_output: true,
+            global_menu: false,
         }
     }
 }
@@ -140,6 +148,7 @@ mod tests {
         let active = ActiveAppConfig::default();
         assert!(active.max_chars >= 8);
         assert!(active.follow_panel_output);
+        assert!(!active.global_menu, "global menu is opt-in");
     }
 
     #[test]

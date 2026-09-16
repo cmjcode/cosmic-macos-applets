@@ -3317,13 +3317,20 @@ checksum = "baee0bbc17ce759db233beb01648088061bf678383130602a298e6998eedb2d8"
 name = "macos-applet-active-app"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "i18n-embed",
  "i18n-embed-fl",
  "libcosmic",
  "macos-common",
  "rust-embed",
+ "serde",
+ "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
+ "x11rb",
+ "zbus",
+ "zvariant",
 ]
 
 [[package]]

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=egui Global Menu Demo
+Exec=egui-global-menu
+Icon=applications-development
+Categories=Development;

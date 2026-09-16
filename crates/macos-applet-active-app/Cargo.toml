@@ -15,3 +15,12 @@ libcosmic.workspace = true
 rust-embed.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+futures.workspace = true
+serde.workspace = true
+x11rb.workspace = true
+zbus.workspace = true
+zvariant.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+tracing-subscriber.workspace = true

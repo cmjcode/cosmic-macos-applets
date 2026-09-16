@@ -13,7 +13,7 @@ const USAGE: &str = "\
 cosmic-macos-setup — macOS-style top bar for COSMIC
 
 USAGE:
-    cosmic-macos-setup apply [--dry-run] [--force] [--opacity <0.0-1.0>] [--no-weekday] [--keep-notifications]
+    cosmic-macos-setup apply [--dry-run] [--force] [--opacity <0.0-1.0>] [--no-weekday] [--keep-notifications] [--global-menu | --no-global-menu]
     cosmic-macos-setup restore [--first | <backup-dir>]
     cosmic-macos-setup backups
     cosmic-macos-setup status
@@ -33,6 +33,12 @@ OPTIONS:
     --no-weekday   Do not show the weekday in the clock.
     --keep-notifications
                    Keep COSMIC's notification applet next to the Control Center.
+    --global-menu  Experimental: show app menus (File, Edit, …) in the bar.
+                   Restart apps afterwards; only apps exporting their menu over
+                   D-Bus take part (Qt apps, X11 apps such as JetBrains IDEs).
+                   Without either flag the current setting is kept.
+    --no-global-menu
+                   Turn the global menu off again.
 ";
 
 #[derive(Debug, PartialEq)]
@@ -77,6 +83,8 @@ fn parse(args: &[String]) -> Result<Command> {
                     "--force" => force = true,
                     "--no-weekday" => options.clock_weekday = false,
                     "--keep-notifications" => options.keep_notifications = true,
+                    "--global-menu" => options.global_menu = Some(true),
+                    "--no-global-menu" => options.global_menu = Some(false),
                     "--opacity" => {
                         let value = it.next().context("--opacity needs a value")?;
                         let opacity: f32 = value.parse().context("--opacity must be a number")?;
@@ -124,7 +132,7 @@ fn print_changes(changes: &[Change]) {
     }
 }
 
-fn collect_changes(options: &Options) -> Result<(Config, Config, Vec<Change>)> {
+fn collect_changes(options: &Options) -> Result<Vec<Change>> {
     let entries: Vec<String> = open(panel_profile::PANEL_LIST_COMPONENT)?
         .get("entries")
         .unwrap_or_default();
@@ -137,10 +145,12 @@ fn collect_changes(options: &Options) -> Result<(Config, Config, Vec<Change>)> {
 
     let panel = open(panel_profile::PANEL_COMPONENT)?;
     let time = open(panel_profile::TIME_COMPONENT)?;
+    let active_app = open(panel_profile::ACTIVE_APP_COMPONENT)?;
     let right = panel_profile::right_applets(options, panel_profile::applet_installed);
     let mut changes = panel_profile::panel_changes(&panel, options, right);
     changes.extend(panel_profile::time_changes(&time, options));
-    Ok((panel, time, changes))
+    changes.extend(panel_profile::active_app_changes(&active_app, options));
+    Ok(changes)
 }
 
 fn apply(dry_run: bool, force: bool, options: &Options) -> Result<()> {
@@ -156,7 +166,7 @@ fn apply(dry_run: bool, force: bool, options: &Options) -> Result<()> {
         );
     }
 
-    let (panel, time, changes) = collect_changes(options)?;
+    let changes = collect_changes(options)?;
     if changes.is_empty() {
         println!("The macOS profile is already applied. Nothing to do.");
         return Ok(());
@@ -173,12 +183,7 @@ fn apply(dry_run: bool, force: bool, options: &Options) -> Result<()> {
     println!("\nBackup saved to {}", backup_dir.display());
 
     for change in &changes {
-        let config = if change.component == panel_profile::TIME_COMPONENT {
-            &time
-        } else {
-            &panel
-        };
-        if let Err(error) = change.apply(config) {
+        if let Err(error) = change.apply() {
             eprintln!("error: {error:#}\nRolling back…");
             backup::restore(&backup::cosmic_config_dir()?, &backup_dir)
                 .context("rollback failed; restore manually with `cosmic-macos-setup restore`")?;
@@ -234,7 +239,7 @@ fn run(command: Command) -> Result<()> {
                 };
                 println!("applet {id}: {state}");
             }
-            let (_, _, changes) = collect_changes(&Options::default())?;
+            let changes = collect_changes(&Options::default())?;
             if changes.is_empty() {
                 println!("profile: applied");
             } else {
@@ -268,7 +273,7 @@ mod tests {
     #[test]
     fn parses_apply_options() {
         let cmd = parse(&args(
-            "apply --dry-run --opacity 0.5 --no-weekday --keep-notifications",
+            "apply --dry-run --opacity 0.5 --no-weekday --keep-notifications --global-menu",
         ))
         .unwrap();
         assert_eq!(
@@ -280,9 +285,21 @@ mod tests {
                     opacity: 0.5,
                     clock_weekday: false,
                     keep_notifications: true,
+                    global_menu: Some(true),
                 },
             }
         );
+    }
+
+    #[test]
+    fn global_menu_flag_is_tristate() {
+        let menu = |a: &str| match parse(&args(a)).unwrap() {
+            Command::Apply { options, .. } => options.global_menu,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(menu("apply"), None);
+        assert_eq!(menu("apply --global-menu"), Some(true));
+        assert_eq!(menu("apply --no-global-menu"), Some(false));
     }
 
     #[test]

@@ -43,6 +43,517 @@ The tray, input source, battery and clock stay COSMIC's own applets. The
 Control Center replaces COSMIC's audio, Bluetooth, network and notification
 applets; pass `--keep-notifications` to keep notification history in the bar.
 
+## Global menu (experimental)
+
+With `cosmic-macos-setup apply --global-menu`, the active application applet
+also shows the focused app's menus (File, Edit, View, …) next to its name.
+Clicking a title drops the menu down under it; submenus open in place.
+
+How it works: the applet hosts `com.canonical.AppMenu.Registrar`. Apps that
+see it stop drawing their own menu bar and export it over D-Bus
+(`com.canonical.dbusmenu`) instead. Then:
+
+- X11 apps register their window with the registrar; the applet matches the
+  focused window by X11 window id.
+- Qt on Wayland does **not** register: it announces menus through KDE's
+  `org_kde_kwin_appmenu` Wayland protocol, which COSMIC lacks. It still
+  exports `/MenuBar/<n>` objects, so the applet finds the bus connections of
+  the focused app's process (executable, `argv[0]`, Flatpak id, or the
+  desktop entry's `Exec=` launcher, e.g. `libreoffice` → `soffice.bin`) and
+  uses the menu bar of the focused window.
+
+| Expected to work | Not supported |
+|---|---|
+| Qt 5/6 apps with a menu bar (KDE apps, qBittorrent, VLC, …), on Wayland or X11 | GTK 3/4 apps (Firefox, GNOME apps); they need `appmenu-gtk-module`, which does not work on Wayland |
+| X11 apps exporting dbusmenu: JetBrains IDEs, Electron apps started with `--ozone-platform=x11` | Electron apps on native Wayland (VS Code and forks, Discord, Slack) |
+| | Apps without a native menu bar (Telegram, browsers) |
+
+Notes:
+
+- Apps look for the registrar only at startup: restart them after enabling.
+- When enabled, supporting apps hide their own menu bar. Turn it off with
+  `cosmic-macos-setup apply --no-global-menu` and restart those apps. Running
+  `apply` without either flag keeps the current setting.
+- Apps only export a classic menu bar. LibreOffice, for example, must use
+  *View › User Interface › Standard Toolbar* (not the Tabbed/Notebookbar modes)
+  and the Qt backend: fully quit it, then start `SAL_USE_VCLPLUGIN=qt6 libreoffice`.
+- An app with several windows exports one menu per window. On Wayland the
+  applet pairs them by creation order; if the counts differ (for example an
+  extra dialog window), it uses the newest menu bar.
+- Every call into an app has a 2 second timeout, so a frozen app cannot freeze
+  the panel. If another registrar already owns the name (for example KDE's),
+  the applet uses it instead and takes over if it goes away.
+
+## Adding global menu support to your app
+
+This section is for app developers. The applet shows a menu in the top bar when
+the app **exports** its menu bar over D-Bus and the applet can tell which
+window it belongs to.
+
+### What the applet needs from your app
+
+1. **A menu exported with `com.canonical.dbusmenu`** on the session bus, at
+   `/MenuBar/<n>`: one object per window, numbered in window creation order
+   (`/MenuBar/1`, `/MenuBar/2`, …).
+2. **A way to pair the window with that menu:**
+   - **Wayland (default for most apps):** nothing to call. The applet looks for
+     `/MenuBar/<n>` on bus connections owned by the focused window's process.
+     The process must be recognizable: its executable name, `argv[0]`, or
+     Flatpak id matches the window's app id, or the app's `.desktop` entry
+     `Exec=` launches it. Simplest rule: **app id = `.desktop` file name =
+     executable name**.
+   - **X11 / XWayland:** call `RegisterWindow(x11_window_id, "/MenuBar/<n>")`
+     on `com.canonical.AppMenu.Registrar` (object
+     `/com/canonical/AppMenu/Registrar`).
+3. **Hide the in-window menu bar only when a host is present.** Check at
+   startup whether `com.canonical.AppMenu.Registrar` has an owner. If it does
+   not, keep your normal menu bar so the app still works on other desktops.
+
+### `com.canonical.dbusmenu` in short
+
+| Member | Kind | What to do |
+|---|---|---|
+| `GetLayout(i parentId, i depth, as props) → (u revision, (ia{sv}av) layout)` | method | Return the tree. The root has id `0`; children are variants wrapping `(ia{sv}av)` structs. Returning the whole tree regardless of arguments is fine. |
+| `Event(i id, s eventId, v data, u timestamp)` | method | `eventId == "clicked"` means the entry was activated. `"opened"`/`"closed"` are informational. |
+| `AboutToShow(i id) → b needUpdate` | method | Return `true` only if you changed the submenu and the panel must reload. |
+| `LayoutUpdated(u revision, i parent)` | signal | Emit after any change (labels, checkmarks, enabled state) with an increased revision. |
+| `ItemsPropertiesUpdated(a(ia{sv}) updated, a(ias) removed)` | signal | Optional finer-grained update; the applet treats it like `LayoutUpdated`. |
+| `Version` (u, `3`), `Status` (s, `"normal"`) | properties | Expected by other hosts such as KDE. |
+
+Entry properties (`a{sv}`), all optional:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `label` | s | Text; `_` marks the mnemonic (`_File`), `__` is a literal underscore |
+| `type` | s | `"separator"` for a separator, otherwise omit |
+| `enabled` / `visible` | b | Default `true` |
+| `children-display` | s | `"submenu"` if the entry opens a submenu |
+| `toggle-type` / `toggle-state` | s / i | `"checkmark"` or `"radio"`; state `1` = on, `0` = off |
+| `shortcut` | aas | Display only, e.g. `[["Control", "S"]]` |
+| `icon-name` | s | Ignored by this applet, used by other hosts |
+
+For more interfaces beyond what this applet uses (`GetGroupProperties`,
+`EventGroup`, `AboutToShowGroup`), see the dbusmenu specification in
+[libdbusmenu](https://github.com/AyatanaIndicators/libdbusmenu/blob/master/libdbusmenu-glib/dbus-menu.xml).
+
+### Per technology
+
+"Tested here" means it was checked on COSMIC epoch 1.8 while building this
+project; everything else follows from how the toolkit works but has not been
+tried yet. Reports are welcome.
+
+| Technology | Support | What to do | Tested here |
+|---|---|---|---|
+| **Qt 5 / Qt 6** (C++, PyQt, PySide, KDE Frameworks) | Built in | Use a normal `QMenuBar` (`QMainWindow::menuBar()`). Do not call `setNativeMenuBar(false)` or set `Qt::AA_DontUseNativeMenuBar`. Set `QGuiApplication::setDesktopFileName("your-app")` to match your `.desktop` file. Qt hides the in-window bar by itself. | Menus exported by LibreOffice's Qt 6 backend |
+| **LibreOffice** | Built in (Qt backend only) | Users start it with `SAL_USE_VCLPLUGIN=qt6` and pick *View › User Interface › Standard Toolbar*. The Tabbed/Notebookbar modes have no menu bar. | Export verified |
+| **Rust: egui / eframe** | Manual, ~200 lines | Follow the [tutorial below](#tutorial-egui--eframe). | Export, clicks and updates verified with `busctl` |
+| **Rust: iced, libcosmic, Slint, Dioxus desktop, …** | Manual | Same module as the egui tutorial; turn the click callback into your framework's message (for iced/libcosmic, send it through a channel subscription). | No |
+| **Electron** (VS Code, Discord, …) | X11 only | Chromium exports `Menu.setApplicationMenu` menus only on X11: start with `--ozone-platform=x11`. Apps with a custom title bar need a native one (VS Code: `"window.titleBarStyle": "native"`). | No |
+| **Tauri** | Manual | Tauri's Linux menus are GTK widgets inside the window and are not exported. Build the menu with the Rust module from the egui tutorial instead and forward clicks to your frontend with events. | No |
+| **JetBrains IDEs** | X11 only | Works when the IDE runs through XWayland (the default AWT toolkit); not with the Wayland toolkit (`-Dawt.toolkit.name=WLToolkit`). | No |
+| **GTK 3** | X11 only, needs a module | Install `appmenu-gtk-module`, run with `GTK_MODULES=appmenu-gtk-module GDK_BACKEND=x11`. Nothing works on native Wayland. | No |
+| **GTK 4 / libadwaita** | Not supported | GTK 4 exports `GMenuModel` over `org.gtk.Menus`, which this applet does not read. | No |
+| **Java Swing / JavaFX** | Not supported | No built-in export. Community agents such as JAyatana exist for X11. | No |
+| **Other languages** | Manual | Any D-Bus library works (`sdbus-c++`, `dasbus`/`dbus-next` for Python, `godbus` for Go, …): implement the table above and export `/MenuBar/1`. | No |
+
+### Tutorial: egui / eframe
+
+A complete, runnable version is in
+[`examples/egui-global-menu`](examples/egui-global-menu)
+(`cd examples/egui-global-menu && cargo run`). The steps:
+
+**1. Dependencies** (tested with eframe 0.36 and zbus 5):
+
+```toml
+[dependencies]
+eframe = "0.36"
+serde = { version = "1", features = ["derive"] }
+zbus = "5"
+```
+
+**2. Add `src/global_menu.rs`.** It exports a menu tree, forwards clicks to a
+callback, and lets you update the menu. It has no egui dependency.
+
+<details>
+<summary><code>src/global_menu.rs</code> (click to expand)</summary>
+
+```rust
+//! Export a menu bar over `com.canonical.dbusmenu` so desktop panels
+//! (COSMIC macOS Top Bar, KDE, Unity-style panels) can show it.
+//!
+//! Drop this file into your crate; it only depends on `zbus` and `serde`.
+
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+
+use serde::{Deserialize, Serialize};
+use zbus::{
+    blocking::{Connection, connection},
+    object_server::SignalEmitter,
+    zvariant::{OwnedValue, Type, Value},
+};
+
+/// Object path panels look for. Use `/MenuBar/2`, `/MenuBar/3`, … for more
+/// windows, numbered in the order the windows were created.
+pub const MENU_PATH: &str = "/MenuBar/1";
+const REGISTRAR: &str = "com.canonical.AppMenu.Registrar";
+
+/// One entry of the menu tree. Ids must be unique and non-zero (0 is the root).
+#[derive(Debug, Clone)]
+pub enum MenuItem {
+    Entry {
+        id: i32,
+        /// `_` marks the mnemonic: `"_File"`.
+        label: String,
+        enabled: bool,
+        /// `Some(true/false)` shows a checkmark toggle.
+        checked: Option<bool>,
+        /// Display-only shortcut, e.g. `&["Control", "S"]`.
+        shortcut: Vec<String>,
+        children: Vec<MenuItem>,
+    },
+    Separator,
+}
+
+impl MenuItem {
+    pub fn action(id: i32, label: &str) -> Self {
+        Self::Entry {
+            id,
+            label: label.into(),
+            enabled: true,
+            checked: None,
+            shortcut: Vec::new(),
+            children: Vec::new(),
+        }
+    }
+
+    pub fn submenu(id: i32, label: &str, children: Vec<MenuItem>) -> Self {
+        Self::Entry {
+            id,
+            label: label.into(),
+            enabled: true,
+            checked: None,
+            shortcut: Vec::new(),
+            children,
+        }
+    }
+
+    pub fn shortcut(mut self, keys: &[&str]) -> Self {
+        if let Self::Entry { shortcut, .. } = &mut self {
+            *shortcut = keys.iter().map(|k| (*k).to_owned()).collect();
+        }
+        self
+    }
+}
+
+/// Wire format of `GetLayout`: `(ia{sv}av)`.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Value, OwnedValue)]
+#[zvariant(signature = "(ia{sv}av)")]
+struct Layout {
+    id: i32,
+    properties: HashMap<String, OwnedValue>,
+    children: Vec<OwnedValue>,
+}
+
+fn owned<'a>(value: impl Into<Value<'a>>) -> OwnedValue {
+    OwnedValue::try_from(value.into()).expect("plain values never carry file descriptors")
+}
+
+fn to_layout(
+    id: i32,
+    item: Option<&MenuItem>,
+    children: &[MenuItem],
+    separator_id: &mut i32,
+) -> Layout {
+    let mut properties = HashMap::new();
+    if let Some(MenuItem::Entry {
+        label,
+        enabled,
+        checked,
+        shortcut,
+        ..
+    }) = item
+    {
+        properties.insert("label".into(), owned(label.as_str()));
+        properties.insert("enabled".into(), owned(*enabled));
+        if let Some(state) = checked {
+            properties.insert("toggle-type".into(), owned("checkmark"));
+            properties.insert("toggle-state".into(), owned(i32::from(*state)));
+        }
+        if !shortcut.is_empty() {
+            properties.insert("shortcut".into(), owned(vec![shortcut.clone()]));
+        }
+    }
+    if !children.is_empty() {
+        properties.insert("children-display".into(), owned("submenu"));
+    }
+    let children = children
+        .iter()
+        .map(|child| {
+            let layout = match child {
+                MenuItem::Entry { id, children, .. } => {
+                    to_layout(*id, Some(child), children, separator_id)
+                }
+                MenuItem::Separator => {
+                    // Separators need ids too; hand out negative ones.
+                    *separator_id -= 1;
+                    let mut properties = HashMap::new();
+                    properties.insert("type".into(), owned("separator"));
+                    Layout {
+                        id: *separator_id,
+                        properties,
+                        children: Vec::new(),
+                    }
+                }
+            };
+            owned(layout)
+        })
+        .collect();
+    Layout {
+        id,
+        properties,
+        children,
+    }
+}
+
+struct State {
+    revision: u32,
+    items: Vec<MenuItem>,
+}
+
+struct DbusMenu {
+    state: Arc<Mutex<State>>,
+    on_click: Box<dyn Fn(i32) + Send + Sync>,
+}
+
+#[zbus::interface(name = "com.canonical.dbusmenu")]
+impl DbusMenu {
+    async fn get_layout(
+        &self,
+        _parent_id: i32,
+        _depth: i32,
+        _properties: Vec<String>,
+    ) -> (u32, Layout) {
+        let state = self.state.lock().unwrap();
+        (state.revision, to_layout(0, None, &state.items, &mut 0))
+    }
+
+    async fn event(&self, id: i32, event_id: String, _data: OwnedValue, _timestamp: u32) {
+        if event_id == "clicked" {
+            (self.on_click)(id);
+        }
+    }
+
+    async fn about_to_show(&self, _id: i32) -> bool {
+        false
+    }
+
+    #[zbus(property)]
+    async fn version(&self) -> u32 {
+        3
+    }
+
+    #[zbus(property)]
+    async fn status(&self) -> String {
+        "normal".into()
+    }
+
+    #[zbus(signal)]
+    async fn layout_updated(
+        emitter: &SignalEmitter<'_>,
+        revision: u32,
+        parent: i32,
+    ) -> zbus::Result<()>;
+}
+
+/// A menu bar exported on the session bus. Keep it alive as long as the window.
+pub struct GlobalMenu {
+    connection: Connection,
+    state: Arc<Mutex<State>>,
+}
+
+impl GlobalMenu {
+    /// Export `items`; `on_click` receives the id of a clicked entry (called
+    /// from a D-Bus thread, so forward it to your UI thread).
+    pub fn export(
+        items: Vec<MenuItem>,
+        on_click: impl Fn(i32) + Send + Sync + 'static,
+    ) -> zbus::Result<Self> {
+        let state = Arc::new(Mutex::new(State { revision: 1, items }));
+        let menu = DbusMenu {
+            state: state.clone(),
+            on_click: Box::new(on_click),
+        };
+        let connection = connection::Builder::session()?
+            .serve_at(MENU_PATH, menu)?
+            .build()?;
+        Ok(Self { connection, state })
+    }
+
+    /// `true` if a global menu host is running, i.e. the panel shows this menu
+    /// and the in-window menu bar should be hidden. Checked at startup.
+    pub fn panel_available(&self) -> bool {
+        zbus::blocking::fdo::DBusProxy::new(&self.connection)
+            .and_then(|dbus| Ok(dbus.name_has_owner(REGISTRAR.try_into()?)?))
+            .unwrap_or(false)
+    }
+
+    /// Replace the menu (e.g. after toggling a checkmark) and notify the panel.
+    pub fn set_items(&self, items: Vec<MenuItem>) -> zbus::Result<()> {
+        let revision = {
+            let mut state = self.state.lock().unwrap();
+            state.items = items;
+            state.revision += 1;
+            state.revision
+        };
+        let emitter = SignalEmitter::new(self.connection.inner(), MENU_PATH)?;
+        zbus::block_on(DbusMenu::layout_updated(&emitter, revision, 0))
+    }
+
+    /// Only needed when running under X11/XWayland: register the X11 window id.
+    #[allow(dead_code)]
+    pub fn register_x11_window(&self, x11_window_id: u32) -> zbus::Result<()> {
+        self.connection.call_method(
+            Some(REGISTRAR),
+            "/com/canonical/AppMenu/Registrar",
+            Some(REGISTRAR),
+            "RegisterWindow",
+            &(
+                x11_window_id,
+                zbus::zvariant::ObjectPath::try_from(MENU_PATH)?,
+            ),
+        )?;
+        Ok(())
+    }
+}
+```
+
+</details>
+
+**3. Describe your menu** with stable ids (they come back in clicks):
+
+```rust
+mod global_menu;
+use global_menu::{GlobalMenu, MenuItem};
+
+const OPEN: i32 = 10;
+const QUIT: i32 = 11;
+
+fn menu_items() -> Vec<MenuItem> {
+    vec![
+        MenuItem::submenu(1, "_File", vec![
+            MenuItem::action(OPEN, "_Open…").shortcut(&["Control", "O"]),
+            MenuItem::Separator,
+            MenuItem::action(QUIT, "_Quit").shortcut(&["Control", "Q"]),
+        ]),
+    ]
+}
+```
+
+**4. Export it when the app starts.** Clicks arrive on a D-Bus thread, so send
+them through a channel and wake egui:
+
+```rust
+use std::sync::mpsc::{Receiver, channel};
+
+struct App {
+    global_menu: Option<GlobalMenu>,
+    menu_in_panel: bool, // checked once; never call D-Bus every frame
+    clicks: Receiver<i32>,
+}
+
+impl App {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let (tx, clicks) = channel();
+        let ctx = cc.egui_ctx.clone();
+        let global_menu = GlobalMenu::export(menu_items(), move |id| {
+            let _ = tx.send(id);
+            ctx.request_repaint();
+        })
+        .ok(); // no session bus: just keep the in-window menu
+        let menu_in_panel = global_menu.as_ref().is_some_and(GlobalMenu::panel_available);
+        Self { global_menu, menu_in_panel, clicks }
+    }
+}
+```
+
+**5. Handle clicks, and draw the egui menu bar only as a fallback:**
+
+```rust
+use eframe::egui;
+
+impl eframe::App for App {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        while let Ok(id) = self.clicks.try_recv() {
+            match id {
+                QUIT => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                OPEN => { /* … */ }
+                _ => {}
+            }
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if !self.menu_in_panel {
+            egui::Panel::top("menu").show(ui, |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
+                    ui.menu_button("File", |ui| { /* same actions */ });
+                });
+            });
+        }
+        egui::CentralPanel::default_margins().show(ui, |ui| { /* your app */ });
+    }
+}
+```
+
+**6. Keep dynamic state in sync.** After toggling a checkmark or enabling an
+entry, rebuild the items and call `global_menu.set_items(new_items)`; it bumps
+the revision and emits `LayoutUpdated`.
+
+**7. Give the window an app id that matches your `.desktop` file and binary:**
+
+```rust
+let options = eframe::NativeOptions {
+    viewport: egui::ViewportBuilder::default().with_app_id("my-app"),
+    ..Default::default()
+};
+eframe::run_native("my-app", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
+```
+
+```ini
+# ~/.local/share/applications/my-app.desktop
+[Desktop Entry]
+Type=Application
+Name=My App
+Exec=my-app
+```
+
+**8. Multiple windows:** export one `GlobalMenu`-style object per window at
+`/MenuBar/1`, `/MenuBar/2`, … in the order the windows are created (the module
+uses a constant path; make it a parameter). **X11:** if you force XWayland,
+also call `register_x11_window` with the window's X11 id.
+
+### Checking your integration
+
+```sh
+# Is a global menu host running? (shows the applet's PID)
+busctl --user status com.canonical.AppMenu.Registrar | grep PID
+
+# Does your app export a menu? Replace <PID> with your app's process id.
+for name in $(busctl --user list --no-pager | awk -v p=<PID> '$2==p{print $1}'); do
+  busctl --user tree "$name" --list --no-pager | grep MenuBar
+done
+
+# Read the menu and simulate a click on entry 11
+busctl --user -- call <name> /MenuBar/1 com.canonical.dbusmenu GetLayout iias 0 -1 0
+busctl --user call <name> /MenuBar/1 com.canonical.dbusmenu Event isvu 11 clicked i 0 0
+```
+
+If the menu is exported but not shown, the window could not be paired with the
+process: check that the app id, `.desktop` file name and executable name agree.
+
 ## Requirements
 
 - COSMIC epoch 1.8 (Wayland session)
@@ -61,7 +572,7 @@ Or step by step:
 ```sh
 just install                          # ~/.local/bin, ~/.local/share/applications
 cosmic-macos-setup apply --dry-run    # preview every config change
-cosmic-macos-setup apply              # apply (options: --opacity 0.9, --no-weekday, --keep-notifications)
+cosmic-macos-setup apply              # apply (options: --opacity 0.9, --no-weekday, --keep-notifications, --global-menu)
 ```
 
 System-wide: `sudo just prefix=/usr install`.
@@ -90,6 +601,7 @@ Both applets hot-reload their settings from `~/.config/cosmic/<applet id>/v1/`.
 | Active app | `bold` | `true` | Bold label |
 | Active app | `empty_label` | `""` | Label with nothing focused; empty means "Desktop" |
 | Active app | `follow_panel_output` | `true` | On multi-monitor setups, show the last active app of this monitor |
+| Active app | `global_menu` | `false` | Experimental global menu, see above |
 | Control Center | `sections` | all | Order of `Connectivity`, `Toggles`, `Display`, `Sound`, `Shortcuts` |
 | Control Center | `show_now_playing` | `true` | Show the media card |
 | Control Center | `max_volume` | `100` | Slider limit, 100 to 150 |
@@ -119,6 +631,12 @@ just check    # rustfmt, clippy -D warnings, tests
 | `cosmic-macos-applets` | Multi-call binary, so libcosmic ships once |
 | `macos-setup` | `cosmic-macos-setup` CLI |
 
+The global menu has an end-to-end test that starts a private `dbus-daemon`,
+registers a fake exporter, and checks matching, layout loading, click
+forwarding and cleanup (`cargo test -p macos-applet-active-app global_menu`).
+`COSMIC_MACOS_MENU_OPEN=<title index>` opens a global menu a few seconds after
+the applet starts.
+
 To screenshot a Control Center page without clicking, launch the applet with
 `COSMIC_MACOS_CC_OPEN_PAGE=main|wifi|bluetooth|sound` (e.g. by editing its
 `Exec` line temporarily); the popup opens a few seconds after start.
@@ -129,8 +647,7 @@ revisions together with the matching `pop-os/cosmic-applets` release.
 
 ## Limitations
 
-- There is no global application menu (File, Edit, View). COSMIC has no
-  AppMenu registrar, so the second applet shows the app name with Hide and Quit.
+- The global menu is experimental and only covers apps listed above.
 - Quit closes every window of the app. Background processes may keep running.
 - Wi-Fi networks that need a new password open COSMIC Settings; saved and open
   networks connect directly from the popup. New Bluetooth devices are paired in

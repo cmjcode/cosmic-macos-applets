@@ -10,6 +10,7 @@ use std::fmt::Debug;
 pub const PANEL_COMPONENT: &str = "com.system76.CosmicPanel.Panel";
 pub const PANEL_LIST_COMPONENT: &str = "com.system76.CosmicPanel";
 pub const TIME_COMPONENT: &str = "com.system76.CosmicAppletTime";
+pub const ACTIVE_APP_COMPONENT: &str = macos_common::ACTIVE_APP_APP_ID;
 
 /// Left side of the bar: system menu, then the focused app's name.
 pub const LEFT: &[&str] = &[macos_common::MENU_APP_ID, macos_common::ACTIVE_APP_APP_ID];
@@ -48,6 +49,9 @@ pub struct Options {
     pub clock_weekday: bool,
     /// Keep COSMIC's notification applet (notification history) in the bar.
     pub keep_notifications: bool,
+    /// Turn the experimental global menu on or off; `None` leaves it as is,
+    /// so re-running `apply` never silently disables it.
+    pub global_menu: Option<bool>,
 }
 
 impl Default for Options {
@@ -56,11 +60,12 @@ impl Default for Options {
             opacity: 0.8,
             clock_weekday: true,
             keep_notifications: false,
+            global_menu: None,
         }
     }
 }
 
-type Writer = Box<dyn Fn(&Config) -> Result<(), cosmic_config::Error>>;
+type Writer = Box<dyn Fn() -> Result<(), cosmic_config::Error>>;
 
 /// One key that differs from the profile.
 pub struct Change {
@@ -72,8 +77,9 @@ pub struct Change {
 }
 
 impl Change {
-    pub fn apply(&self, config: &Config) -> Result<()> {
-        (self.write)(config).with_context(|| format!("write {}/{}", self.component, self.key))
+    /// Write the desired value into the config this change was computed from.
+    pub fn apply(&self) -> Result<()> {
+        (self.write)().with_context(|| format!("write {}/{}", self.component, self.key))
     }
 }
 
@@ -95,7 +101,10 @@ where
         key,
         current: current.map_or_else(|| "(default)".to_owned(), |v| format!("{v:?}")),
         desired: format!("{desired:?}"),
-        write: Box::new(move |c| c.set(key, desired.clone())),
+        write: {
+            let config = config.clone();
+            Box::new(move || config.set(key, desired.clone()))
+        },
     })
 }
 
@@ -151,6 +160,15 @@ pub fn panel_changes(panel: &Config, options: &Options, right: Vec<String>) -> V
     .into_iter()
     .flatten()
     .collect()
+}
+
+/// Compute the change for the focused-app applet config.
+pub fn active_app_changes(active_app: &Config, options: &Options) -> Vec<Change> {
+    options
+        .global_menu
+        .and_then(|enabled| diff(active_app, ACTIVE_APP_COMPONENT, "global_menu", enabled))
+        .into_iter()
+        .collect()
 }
 
 /// Compute every change needed for the clock applet config.
@@ -226,7 +244,7 @@ mod tests {
         );
         assert!(changes.iter().any(|c| c.key == "plugins_wings"));
         for change in &changes {
-            change.apply(&config).unwrap();
+            change.apply().unwrap();
         }
         let again = panel_changes(
             &config,
@@ -237,6 +255,30 @@ mod tests {
         assert!(
             again.is_empty(),
             "profile must be idempotent, still differs: {keys:?}"
+        );
+
+        // Each change writes to the config it was computed from.
+        let applet = Config::new("io.github.jayuda.CosmicMacosTestApplet", 1).unwrap();
+        assert!(
+            active_app_changes(&applet, &Options::default()).is_empty(),
+            "without a flag the setting is left alone"
+        );
+        let enable = Options {
+            global_menu: Some(true),
+            ..Options::default()
+        };
+        let changes = active_app_changes(&applet, &enable);
+        assert_eq!(changes.len(), 1);
+        changes[0].apply().unwrap();
+        assert!(applet.get::<bool>("global_menu").unwrap());
+        assert!(
+            config.get::<bool>("global_menu").is_err(),
+            "must not leak into another component"
+        );
+        assert!(active_app_changes(&applet, &enable).is_empty());
+        assert!(
+            active_app_changes(&applet, &Options::default()).is_empty(),
+            "re-running apply without the flag keeps it enabled"
         );
     }
 }

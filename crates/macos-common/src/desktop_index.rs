@@ -24,6 +24,8 @@ pub struct AppMeta {
     pub icon: Option<String>,
     /// Path of the matching desktop file, if one was found.
     pub desktop_file: Option<std::path::PathBuf>,
+    /// File name of the program the entry launches, e.g. `kate`.
+    pub program: Option<String>,
 }
 
 /// Result of resolving an app id against the in-memory index.
@@ -151,8 +153,32 @@ impl DesktopIndex {
             name,
             icon: entry.icon().map(str::to_owned),
             desktop_file: Some(entry.path.clone()).filter(|p| !p.as_os_str().is_empty()),
+            program: entry.exec().and_then(exec_program_name),
         })
     }
+}
+
+/// File name of the program an `Exec=` line runs, skipping `env VAR=value`
+/// wrappers and field codes. `flatpak run … org.app.Id` yields the app id.
+#[must_use]
+pub fn exec_program_name(exec: &str) -> Option<String> {
+    let mut tokens = exec
+        .split_whitespace()
+        .map(|t| t.trim_matches(|c| c == '"' || c == '\''))
+        .filter(|t| !t.starts_with('%'))
+        .peekable();
+
+    let mut program = tokens.next()?;
+    while program == "env" || program.contains('=') {
+        program = tokens.next()?;
+    }
+    let base = |p: &str| p.rsplit('/').next().unwrap_or(p).to_owned();
+    if base(program) == "flatpak" {
+        return tokens
+            .rfind(|t| !t.starts_with('-') && *t != "run")
+            .map(str::to_owned);
+    }
+    Some(base(program)).filter(|p| !p.is_empty())
 }
 
 /// Turn a raw app id into something presentable when no desktop entry exists,
@@ -273,6 +299,27 @@ mod tests {
             Resolution::Hit(meta) => assert_eq!(meta.name, "Firefox"),
             other => panic!("expected hit, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn extracts_program_from_exec_lines() {
+        assert_eq!(
+            exec_program_name("/usr/bin/kate -b %U").as_deref(),
+            Some("kate")
+        );
+        assert_eq!(
+            exec_program_name("env QT_SCALE=2 LANG=C dolphin %u").as_deref(),
+            Some("dolphin")
+        );
+        assert_eq!(
+            exec_program_name(
+                "/usr/bin/flatpak run --branch=stable --command=kdenlive org.kde.kdenlive %F"
+            )
+            .as_deref(),
+            Some("org.kde.kdenlive")
+        );
+        assert_eq!(exec_program_name("   "), None);
+        assert_eq!(exec_program_name("env"), None);
     }
 
     #[test]

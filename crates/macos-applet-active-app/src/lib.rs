@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! Shows the focused application's name in the COSMIC panel, macOS style.
 
+mod global_menu;
 mod localize;
 mod model;
 mod wayland;
