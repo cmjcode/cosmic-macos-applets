@@ -1,0 +1,4 @@
+/target
+*.cosmic-macos-tmp
+*/target
+/**/target
