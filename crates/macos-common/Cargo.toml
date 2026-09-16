@@ -1,0 +1,19 @@
+[package]
+name = "macos-common"
+description = "Shared config, desktop-entry index and logging for the COSMIC macOS top bar applets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+cosmic-config.workspace = true
+freedesktop-desktop-entry.workspace = true
+logind-zbus.workspace = true
+rustix.workspace = true
+zbus.workspace = true
+serde.workspace = true
+tracing.workspace = true
+tracing-log.workspace = true
+tracing-subscriber.workspace = true

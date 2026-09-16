@@ -1,0 +1,15 @@
+[Desktop Entry]
+Name=macOS Control Center
+Name[id]=Pusat Kontrol macOS
+Comment=Wi-Fi, Bluetooth, Focus, display, sound and media controls in one popup
+Comment[id]=Kontrol Wi-Fi, Bluetooth, Fokus, layar, suara dan media dalam satu popup
+Type=Application
+Exec=@bindir@/cosmic-macos-control-center
+Terminal=false
+Categories=COSMIC;
+Keywords=COSMIC;Applet;macOS;Control;Center;Wi-Fi;Bluetooth;Volume;Brightness;
+Icon=io.github.jayuda.CosmicMacosControlCenter-symbolic
+NoDisplay=true
+X-CosmicApplet=true
+X-HostWaylandDisplay=true
+X-CosmicHoverPopup=Auto

@@ -1,0 +1,15 @@
+[Desktop Entry]
+Name=macOS System Menu
+Name[id]=Menu Sistem macOS
+Comment=System menu with About, Settings, Sleep, Restart, Shut Down, Lock and Log Out
+Comment[id]=Menu sistem berisi Tentang, Pengaturan, Tidur, Mulai Ulang, Matikan, Kunci dan Keluar
+Type=Application
+Exec=@bindir@/cosmic-macos-menu
+Terminal=false
+Categories=COSMIC;
+Keywords=COSMIC;Applet;macOS;Menu;Power;
+Icon=io.github.jayuda.CosmicMacosMenu-symbolic
+NoDisplay=true
+X-CosmicApplet=true
+X-HostWaylandDisplay=true
+X-CosmicHoverPopup=Auto

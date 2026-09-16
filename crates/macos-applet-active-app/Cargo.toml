@@ -1,0 +1,17 @@
+[package]
+name = "macos-applet-active-app"
+description = "Shows the focused application's name in the COSMIC panel, macOS style"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+macos-common.workspace = true
+i18n-embed.workspace = true
+i18n-embed-fl.workspace = true
+libcosmic.workspace = true
+rust-embed.workspace = true
+tokio.workspace = true
+tracing.workspace = true

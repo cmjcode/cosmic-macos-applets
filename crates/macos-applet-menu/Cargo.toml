@@ -1,0 +1,17 @@
+[package]
+name = "macos-applet-menu"
+description = "macOS-style system menu applet for the COSMIC panel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+macos-common.workspace = true
+i18n-embed.workspace = true
+i18n-embed-fl.workspace = true
+libcosmic.workspace = true
+rust-embed.workspace = true
+tokio.workspace = true
+tracing.workspace = true

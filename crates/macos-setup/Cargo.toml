@@ -1,0 +1,23 @@
+[package]
+name = "macos-setup"
+description = "Applies or restores the macOS-style COSMIC panel profile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "cosmic-macos-setup"
+path = "src/main.rs"
+
+[dependencies]
+macos-common.workspace = true
+anyhow.workspace = true
+cosmic-config.workspace = true
+cosmic-panel-config.workspace = true
+freedesktop-desktop-entry.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

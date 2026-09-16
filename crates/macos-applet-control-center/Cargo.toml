@@ -1,0 +1,31 @@
+[package]
+name = "macos-applet-control-center"
+description = "macOS-style Control Center applet for the COSMIC panel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+macos-common.workspace = true
+bluer.workspace = true
+cosmic-config.workspace = true
+cosmic-notifications-config.workspace = true
+cosmic-settings-audio-client.workspace = true
+cosmic-settings-daemon-subscription.workspace = true
+cosmic-settings-upower-subscription.workspace = true
+futures.workspace = true
+i18n-embed.workspace = true
+i18n-embed-fl.workspace = true
+libcosmic.workspace = true
+logind-zbus.workspace = true
+mpris2-zbus.workspace = true
+nmrs.workspace = true
+rust-embed.workspace = true
+rustix.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+zbus.workspace = true
+zlink.workspace = true

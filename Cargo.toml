@@ -1,0 +1,102 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/macos-common",
+    "crates/macos-applet-menu",
+    "crates/macos-applet-active-app",
+    "crates/macos-applet-control-center",
+    "crates/macos-setup",
+    "crates/cosmic-macos-applets",
+]
+default-members = ["crates/cosmic-macos-applets", "crates/macos-setup"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+authors = ["YNP. Jayuda <yulius.jayuda@gmail.com>"]
+repository = "https://github.com/jayuda/cosmic-macos-applet"
+rust-version = "1.93"
+
+[workspace.dependencies]
+macos-common = { path = "crates/macos-common" }
+macos-applet-menu = { path = "crates/macos-applet-menu" }
+macos-applet-active-app = { path = "crates/macos-applet-active-app" }
+macos-applet-control-center = { path = "crates/macos-applet-control-center" }
+
+# Git dependencies are declared like pop-os/cosmic-applets (no `rev`) so that
+# transitive references from cosmic-panel-config / cosmic-settings-config end
+# up on the same source. The exact commits are forced by [patch] at the bottom.
+libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = false, features = [
+    "applet",
+    "applet-token",
+    "dbus-config",
+    "multi-window",
+    "tokio",
+    "wayland",
+    "desktop",
+    "winit",
+] }
+cosmic-config = { git = "https://github.com/pop-os/libcosmic" }
+cosmic-panel-config = { git = "https://github.com/pop-os/cosmic-panel" }
+# Control Center backends, the same crates the upstream COSMIC applets use.
+cosmic-settings-audio-client = { git = "https://github.com/pop-os/cosmic-settings-daemon", features = ["codec"] }
+cosmic-settings-daemon-subscription = { git = "https://github.com/pop-os/cosmic-settings" }
+cosmic-settings-upower-subscription = { git = "https://github.com/pop-os/cosmic-settings" }
+cosmic-notifications-config = { git = "https://github.com/pop-os/cosmic-notifications" }
+mpris2-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
+bluer = { version = "0.17.4", features = ["bluetoothd", "id"] }
+nmrs = "3.5.2"
+futures = "0.3"
+zlink = "0.5.0"
+
+anyhow = "1.0.102"
+freedesktop-desktop-entry = "0.8.1"
+i18n-embed = { version = "0.16.0", features = ["fluent-system", "desktop-requester"] }
+i18n-embed-fl = "0.10"
+logind-zbus = "5.3.2"
+rust-embed = "8.11.0"
+rustix = { version = "1.1", features = ["fs", "process"] }
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.49.0", features = ["full"] }
+tracing = "0.1"
+tracing-log = "0.2.0"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+zbus = { version = "5.14.0", default-features = false, features = ["tokio"] }
+
+# Pin every COSMIC git dependency to the commits shipped with COSMIC epoch 1.8.0
+# (the Cargo.lock of pop-os/cosmic-applets tag epoch-1.8.0). Using the `//`-suffixed
+# URL makes Cargo treat these as replacement sources, so the pins hold even
+# after `cargo update` and match the protocols of the installed panel.
+[patch."https://github.com/pop-os/libcosmic"]
+libcosmic = { git = "https://github.com/pop-os/libcosmic//", rev = "d4d71fd53e5ed6bd3a430089114dffa2da3cd498" }
+cosmic-config = { git = "https://github.com/pop-os/libcosmic//", rev = "d4d71fd53e5ed6bd3a430089114dffa2da3cd498" }
+cosmic-theme = { git = "https://github.com/pop-os/libcosmic//", rev = "d4d71fd53e5ed6bd3a430089114dffa2da3cd498" }
+# cosmic-settings subscriptions depend on these iced crates directly; they must
+# be the exact copies libcosmic uses so `Subscription` types line up.
+iced_futures = { git = "https://github.com/pop-os/libcosmic//", rev = "d4d71fd53e5ed6bd3a430089114dffa2da3cd498" }
+iced_core = { git = "https://github.com/pop-os/libcosmic//", rev = "d4d71fd53e5ed6bd3a430089114dffa2da3cd498" }
+
+[patch."https://github.com/pop-os/cosmic-panel"]
+cosmic-panel-config = { git = "https://github.com/pop-os/cosmic-panel//", rev = "f664a34c788f09689be9efa88e41040d7e6361f1" }
+
+[patch."https://github.com/pop-os/cosmic-settings-daemon"]
+cosmic-settings-config = { git = "https://github.com/pop-os/cosmic-settings-daemon//", rev = "67c995d5e659173352ca0adfb22108ac1bf91f5a" }
+cosmic-settings-audio-client = { git = "https://github.com/pop-os/cosmic-settings-daemon//", rev = "8c54bbbc10485c31e8717c21e119e19b87eeb3ea" }
+
+[patch."https://github.com/pop-os/cosmic-settings"]
+cosmic-settings-daemon-subscription = { git = "https://github.com/pop-os/cosmic-settings//", rev = "ae5c7506627373f62e78372ce9e932fb591de35b" }
+cosmic-settings-upower-subscription = { git = "https://github.com/pop-os/cosmic-settings//", rev = "ae5c7506627373f62e78372ce9e932fb591de35b" }
+
+[patch."https://github.com/pop-os/cosmic-notifications"]
+cosmic-notifications-config = { git = "https://github.com/pop-os/cosmic-notifications//", rev = "7c723b7705ec77b1ad5396a1baa9ae1c0cb5a0da" }
+
+[patch."https://github.com/pop-os/dbus-settings-bindings"]
+mpris2-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings//", rev = "eed01dd3609e90e3c8cd043656734c500956c793" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+panic = "abort"
+codegen-units = 16
+strip = "debuginfo"

@@ -1,0 +1,17 @@
+[Desktop Entry]
+Name=macOS Active Application
+Name[id]=Aplikasi Aktif macOS
+Comment=Shows the name of the focused application in bold, like the macOS menu bar
+Comment[id]=Menampilkan nama aplikasi yang sedang fokus dengan huruf tebal, seperti menu bar macOS
+Type=Application
+Exec=@bindir@/cosmic-macos-active-app
+Terminal=false
+Categories=COSMIC;
+Keywords=COSMIC;Applet;macOS;Window;Focus;
+Icon=applications-system-symbolic
+NoDisplay=true
+X-CosmicApplet=true
+X-HostWaylandDisplay=true
+X-CosmicShrinkable=true
+X-CosmicHoverPopup=Auto
+X-OverflowPriority=10
