@@ -3,6 +3,8 @@
 A macOS-style menu bar for the [COSMIC](https://system76.com/cosmic) desktop.
 It adds three panel applets and a setup tool that restyles the existing top panel.
 
+![Control Center](screenshot/top-right.png)
+
 ```
 [◉]  Firefox                                 ▣ us ♿ 🔋  [⊜]  Wed, Sep 16, 4:06 PM
  │     │                                             │     └ clock at the far right
@@ -51,6 +53,8 @@ applets; pass `--keep-notifications` to keep notification history in the bar.
 With `cosmic-macos-setup apply --global-menu`, the active application applet
 also shows the focused app's menus (File, Edit, View, …) next to its name.
 Clicking a title drops the menu down under it; submenus open in place.
+
+![Global Menu](screenshot/global-menu.png)
 
 How it works: the applet hosts `com.canonical.AppMenu.Registrar`. Apps that
 see it stop drawing their own menu bar and export it over D-Bus
@@ -665,6 +669,10 @@ service; linux-3-finger-drag is uninstalled from its own repository.
 
 Open *Top Bar Settings…* from the system menu, or search for it in the app
 launcher. It is laid out like COSMIC Settings, with search in the header.
+
+![Top Bar Settings - Top Bar](screenshot/topbar-1.png)
+
+![Top Bar Settings - System Menu](screenshot/topbar-2.png)
 
 | Page | What it changes |
 |---|---|
