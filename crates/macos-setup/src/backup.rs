@@ -21,6 +21,8 @@ pub const COMPONENTS: &[&str] = &[
 const VERSION_DIR: &str = "v1";
 /// Marker written last, so a half-written backup is never picked for restore.
 const COMPLETE_MARKER: &str = ".complete";
+/// `name=true|false` lines: the session services' state at backup time.
+const SERVICES_FILE: &str = "session-services";
 
 fn home() -> Result<PathBuf> {
     std::env::var_os("HOME")
@@ -87,8 +89,9 @@ fn copy_dir_files(from: &Path, to: &Path) -> Result<usize> {
     Ok(copied)
 }
 
-/// Copy the current config of every component into a new timestamped backup.
-pub fn create(config_dir: &Path, backups: &Path) -> Result<PathBuf> {
+/// Copy the current config of every component into a new timestamped backup,
+/// together with the on/off state of the session services.
+pub fn create(config_dir: &Path, backups: &Path, services: &[(&str, bool)]) -> Result<PathBuf> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -106,8 +109,35 @@ pub fn create(config_dir: &Path, backups: &Path) -> Result<PathBuf> {
             &dir.join(component).join(VERSION_DIR),
         )?;
     }
+    let states: String = services
+        .iter()
+        .map(|(name, on)| format!("{name}={on}\n"))
+        .collect();
+    fs::write(dir.join(SERVICES_FILE), states)?;
     fs::write(dir.join(COMPLETE_MARKER), b"")?;
     Ok(dir)
+}
+
+/// Session service states saved in `backup`. Backups made before this was
+/// recorded have none, and restoring them leaves the services alone.
+pub fn services(backup: &Path) -> Result<Vec<(String, bool)>> {
+    let Ok(contents) = fs::read_to_string(backup.join(SERVICES_FILE)) else {
+        return Ok(Vec::new());
+    };
+    contents
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|line| {
+            let (name, on) = line
+                .split_once('=')
+                .with_context(|| format!("bad line in {SERVICES_FILE}: {line}"))?;
+            let on = on
+                .trim()
+                .parse()
+                .with_context(|| format!("bad value in {SERVICES_FILE}: {line}"))?;
+            Ok((name.trim().to_owned(), on))
+        })
+        .collect()
 }
 
 /// All complete backups, oldest first.
@@ -189,8 +219,20 @@ mod tests {
         fs::write(panel.join("anchor"), "Top").unwrap();
         fs::write(panel.join("size"), "XS").unwrap();
 
-        let backup = create(&config, &backups).unwrap();
+        let backup = create(
+            &config,
+            &backups,
+            &[("window-controls-left", false), ("three-finger-drag", true)],
+        )
+        .unwrap();
         assert_eq!(list(&backups).unwrap(), vec![backup.clone()]);
+        assert_eq!(
+            services(&backup).unwrap(),
+            vec![
+                ("window-controls-left".to_owned(), false),
+                ("three-finger-drag".to_owned(), true)
+            ]
+        );
 
         // Simulate `apply`.
         fs::write(panel.join("anchor"), "Bottom").unwrap();
@@ -212,5 +254,13 @@ mod tests {
         fs::create_dir_all(tmp.path().join("20260101T000000Z")).unwrap();
         assert!(list(tmp.path()).unwrap().is_empty());
         assert!(restore(tmp.path(), &tmp.path().join("20260101T000000Z")).is_err());
+    }
+
+    #[test]
+    fn old_backups_have_no_service_states() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(services(tmp.path()).unwrap().is_empty());
+        fs::write(tmp.path().join(SERVICES_FILE), "x=maybe\n").unwrap();
+        assert!(services(tmp.path()).is_err());
     }
 }

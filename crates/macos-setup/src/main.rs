@@ -3,6 +3,9 @@
 
 mod backup;
 mod panel_profile;
+mod three_finger_drag;
+mod user_service;
+mod window_controls;
 
 use anyhow::{Context, Result, bail};
 use cosmic_config::{Config, ConfigGet};
@@ -13,7 +16,10 @@ const USAGE: &str = "\
 cosmic-macos-setup — macOS-style top bar for COSMIC
 
 USAGE:
-    cosmic-macos-setup apply [--dry-run] [--force] [--opacity <0.0-1.0>] [--no-weekday] [--keep-notifications] [--global-menu | --no-global-menu]
+    cosmic-macos-setup apply [--dry-run] [--force] [--opacity <0.0-1.0>] [--no-weekday] [--keep-notifications]
+                             [--global-menu | --no-global-menu]
+                             [--window-controls-left | --window-controls-right]
+                             [--three-finger-drag | --no-three-finger-drag]
     cosmic-macos-setup restore [--first | <backup-dir>]
     cosmic-macos-setup backups
     cosmic-macos-setup status
@@ -25,6 +31,9 @@ COMMANDS:
               (--first, i.e. the configuration before this tool), or the given one.
     backups   List available backups.
     status    Show which settings differ from the profile.
+    window-controls-watch
+              Keep window controls on the left (run by the user service that
+              --window-controls-left installs).
 
 OPTIONS:
     --dry-run      Print the changes without writing anything.
@@ -39,6 +48,22 @@ OPTIONS:
                    Without either flag the current setting is kept.
     --no-global-menu
                    Turn the global menu off again.
+    --window-controls-left
+                   Close, minimize and maximize on the left in GTK, libadwaita
+                   and Chromium/Electron apps. Installs a user service that keeps
+                   COSMIC from moving them back. COSMIC apps and server-side
+                   decorations keep them on the right.
+    --window-controls-right
+                   Remove that service and put the controls back on the right.
+    --three-finger-drag
+                   Drag with three fingers on the touchpad. Needs
+                   linux-3-finger-drag installed once with sudo; this only
+                   switches its user service on.
+    --no-three-finger-drag
+                   Switch the three-finger drag service off.
+
+Service flags are left unchanged when neither form is given, and `restore`
+returns them to their state at backup time.
 ";
 
 #[derive(Debug, PartialEq)]
@@ -58,6 +83,7 @@ enum Command {
     Restore(RestoreTarget),
     Backups,
     Status,
+    WindowControlsWatch,
     Help,
 }
 
@@ -65,6 +91,10 @@ impl PartialEq for Options {
     fn eq(&self, other: &Self) -> bool {
         (self.opacity - other.opacity).abs() < f32::EPSILON
             && self.clock_weekday == other.clock_weekday
+            && self.keep_notifications == other.keep_notifications
+            && self.global_menu == other.global_menu
+            && self.window_controls_left == other.window_controls_left
+            && self.three_finger_drag == other.three_finger_drag
     }
 }
 
@@ -85,6 +115,10 @@ fn parse(args: &[String]) -> Result<Command> {
                     "--keep-notifications" => options.keep_notifications = true,
                     "--global-menu" => options.global_menu = Some(true),
                     "--no-global-menu" => options.global_menu = Some(false),
+                    "--window-controls-left" => options.window_controls_left = Some(true),
+                    "--window-controls-right" => options.window_controls_left = Some(false),
+                    "--three-finger-drag" => options.three_finger_drag = Some(true),
+                    "--no-three-finger-drag" => options.three_finger_drag = Some(false),
                     "--opacity" => {
                         let value = it.next().context("--opacity needs a value")?;
                         let opacity: f32 = value.parse().context("--opacity must be a number")?;
@@ -115,6 +149,7 @@ fn parse(args: &[String]) -> Result<Command> {
         }
         "backups" => Ok(Command::Backups),
         "status" => Ok(Command::Status),
+        "window-controls-watch" => Ok(Command::WindowControlsWatch),
         other => bail!("unknown command: {other}\n\n{USAGE}"),
     }
 }
@@ -153,6 +188,87 @@ fn collect_changes(options: &Options) -> Result<Vec<Change>> {
     Ok(changes)
 }
 
+/// A session tweak that lives in a user service rather than in cosmic-config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Service {
+    WindowControlsLeft,
+    ThreeFingerDrag,
+}
+
+impl Service {
+    const ALL: [Self; 2] = [Self::WindowControlsLeft, Self::ThreeFingerDrag];
+
+    /// Stable name used in backups.
+    fn name(self) -> &'static str {
+        match self {
+            Self::WindowControlsLeft => "window-controls-left",
+            Self::ThreeFingerDrag => "three-finger-drag",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name() == name)
+    }
+
+    fn requested(self, options: &Options) -> Option<bool> {
+        match self {
+            Self::WindowControlsLeft => options.window_controls_left,
+            Self::ThreeFingerDrag => options.three_finger_drag,
+        }
+    }
+
+    fn enabled(self) -> bool {
+        match self {
+            Self::WindowControlsLeft => window_controls::enabled(),
+            Self::ThreeFingerDrag => three_finger_drag::enabled(),
+        }
+    }
+
+    fn set_enabled(self, enable: bool) -> Result<()> {
+        match self {
+            Self::WindowControlsLeft => window_controls::set_enabled(enable),
+            Self::ThreeFingerDrag => three_finger_drag::set_enabled(enable),
+        }
+        .with_context(|| format!("switch {} {}", self.name(), on_off(enable)))
+    }
+}
+
+fn on_off(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
+}
+
+/// Services whose requested state differs from `current`, in a stable order.
+fn service_changes(options: &Options, current: impl Fn(Service) -> bool) -> Vec<(Service, bool)> {
+    Service::ALL
+        .into_iter()
+        .filter_map(|s| s.requested(options).map(|want| (s, want)))
+        .filter(|&(s, want)| current(s) != want)
+        .collect()
+}
+
+fn service_states() -> Vec<(&'static str, bool)> {
+    Service::ALL
+        .into_iter()
+        .map(|s| (s.name(), s.enabled()))
+        .collect()
+}
+
+/// Put config and services back to `backup`, returning the config key count.
+fn restore_from(backup_dir: &std::path::Path) -> Result<usize> {
+    let saved = backup::services(backup_dir)?;
+    let changes = backup::restore(&backup::cosmic_config_dir()?, backup_dir)?;
+    for (name, want) in saved {
+        let Some(service) = Service::from_name(&name) else {
+            continue;
+        };
+        if service.enabled() != want {
+            service.set_enabled(want)?;
+            println!("  {} {}", service.name(), on_off(want));
+        }
+    }
+    Ok(changes)
+}
+
 fn apply(dry_run: bool, force: bool, options: &Options) -> Result<()> {
     let missing: Vec<&str> = panel_profile::OWN_APPLETS
         .iter()
@@ -167,28 +283,47 @@ fn apply(dry_run: bool, force: bool, options: &Options) -> Result<()> {
     }
 
     let changes = collect_changes(options)?;
-    if changes.is_empty() {
+    let services = service_changes(options, Service::enabled);
+    if services.contains(&(Service::ThreeFingerDrag, true)) {
+        three_finger_drag::check_can_enable()?;
+    }
+    if changes.is_empty() && services.is_empty() {
         println!("The macOS profile is already applied. Nothing to do.");
         return Ok(());
     }
-    println!("{} setting(s) will change:", changes.len());
+    println!("{} setting(s) will change:", changes.len() + services.len());
     print_changes(&changes);
+    for (service, want) in &services {
+        println!(
+            "  service {}\n      {} -> {}",
+            service.name(),
+            on_off(!want),
+            on_off(*want)
+        );
+    }
     if dry_run {
         println!("\nDry run: nothing was written.");
         return Ok(());
     }
 
-    let backup_dir = backup::create(&backup::cosmic_config_dir()?, &backup::backups_dir()?)
-        .context("backup failed; nothing was changed")?;
+    let backup_dir = backup::create(
+        &backup::cosmic_config_dir()?,
+        &backup::backups_dir()?,
+        &service_states(),
+    )
+    .context("backup failed; nothing was changed")?;
     println!("\nBackup saved to {}", backup_dir.display());
 
-    for change in &changes {
-        if let Err(error) = change.apply() {
-            eprintln!("error: {error:#}\nRolling back…");
-            backup::restore(&backup::cosmic_config_dir()?, &backup_dir)
-                .context("rollback failed; restore manually with `cosmic-macos-setup restore`")?;
-            bail!("apply failed and the previous configuration was restored");
-        }
+    let result = changes.iter().try_for_each(Change::apply).and_then(|()| {
+        services
+            .iter()
+            .try_for_each(|&(service, want)| service.set_enabled(want))
+    });
+    if let Err(error) = result {
+        eprintln!("error: {error:#}\nRolling back…");
+        restore_from(&backup_dir)
+            .context("rollback failed; restore manually with `cosmic-macos-setup restore`")?;
+        bail!("apply failed and the previous configuration was restored");
     }
     println!(
         "Applied. Undo with `cosmic-macos-setup restore` (or `restore --first` for the original panel)"
@@ -207,7 +342,7 @@ fn restore(target: RestoreTarget) -> Result<()> {
             .next()
             .context("no backups found")?,
     };
-    let changes = backup::restore(&backup::cosmic_config_dir()?, &dir)?;
+    let changes = restore_from(&dir)?;
     println!("Restored {} ({changes} key(s) changed).", dir.display());
     Ok(())
 }
@@ -221,6 +356,7 @@ fn run(command: Command) -> Result<()> {
             options,
         } => apply(dry_run, force, &options)?,
         Command::Restore(dir) => restore(dir)?,
+        Command::WindowControlsWatch => window_controls::watch()?,
         Command::Backups => {
             let backups = backup::list(&backup::backups_dir()?)?;
             if backups.is_empty() {
@@ -238,6 +374,9 @@ fn run(command: Command) -> Result<()> {
                     "MISSING"
                 };
                 println!("applet {id}: {state}");
+            }
+            for service in Service::ALL {
+                println!("service {}: {}", service.name(), on_off(service.enabled()));
             }
             let changes = collect_changes(&Options::default())?;
             if changes.is_empty() {
@@ -286,6 +425,8 @@ mod tests {
                     clock_weekday: false,
                     keep_notifications: true,
                     global_menu: Some(true),
+                    window_controls_left: None,
+                    three_finger_drag: None,
                 },
             }
         );
@@ -300,6 +441,51 @@ mod tests {
         assert_eq!(menu("apply"), None);
         assert_eq!(menu("apply --global-menu"), Some(true));
         assert_eq!(menu("apply --no-global-menu"), Some(false));
+    }
+
+    #[test]
+    fn service_flags_are_tristate() {
+        let opts = |a: &str| match parse(&args(a)).unwrap() {
+            Command::Apply { options, .. } => {
+                (options.window_controls_left, options.three_finger_drag)
+            }
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(opts("apply"), (None, None));
+        assert_eq!(
+            opts("apply --window-controls-left --three-finger-drag"),
+            (Some(true), Some(true))
+        );
+        assert_eq!(
+            opts("apply --window-controls-right --no-three-finger-drag"),
+            (Some(false), Some(false))
+        );
+        assert_eq!(
+            parse(&args("window-controls-watch")).unwrap(),
+            Command::WindowControlsWatch
+        );
+    }
+
+    #[test]
+    fn only_services_that_differ_change() {
+        let options = Options {
+            window_controls_left: Some(true),
+            three_finger_drag: Some(false),
+            ..Options::default()
+        };
+        // Window controls already left, drag currently on: only drag changes.
+        let got = service_changes(&options, |_| true);
+        assert_eq!(got, vec![(Service::ThreeFingerDrag, false)]);
+        // Unrequested services never change.
+        assert!(service_changes(&Options::default(), |_| false).is_empty());
+    }
+
+    #[test]
+    fn service_names_round_trip() {
+        for service in Service::ALL {
+            assert_eq!(Service::from_name(service.name()), Some(service));
+        }
+        assert_eq!(Service::from_name("bogus"), None);
     }
 
     #[test]

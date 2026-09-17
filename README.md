@@ -38,6 +38,8 @@ networks, paired devices, or audio outputs.
 | Active application | applet `io.github.jayuda.CosmicMacosActiveApp` | Follows focus through the Wayland toplevel protocols, event driven with no polling. Resolves names from `.desktop` files, off the UI thread. |
 | Control Center | applet `io.github.jayuda.CosmicMacosControlCenter` | Wi-Fi via NetworkManager, Bluetooth via BlueZ, volume and output via cosmic-settings-daemon, brightness, Now Playing via MPRIS, Do Not Disturb, dark mode, screenshot, lock, battery. Every service reconnects on its own. |
 | `cosmic-macos-setup` | CLI | Backs up and then rewrites the panel config. The panel reloads live. `restore` undoes it. |
+| Window controls on the left | opt-in, `--window-controls-left` | Close, minimize and maximize on the left in GTK and Chromium apps. See below. |
+| Three-finger drag | opt-in, `--three-finger-drag` | Switches on [linux-3-finger-drag](https://github.com/lmr97/linux-3-finger-drag), installed separately. See below. |
 
 The tray, input source, battery and clock stay COSMIC's own applets. The
 Control Center replaces COSMIC's audio, Bluetooth, network and notification
@@ -83,6 +85,69 @@ Notes:
 - Every call into an app has a 2 second timeout, so a frozen app cannot freeze
   the panel. If another registrar already owns the name (for example KDE's),
   the applet uses it instead and takes over if it goes away.
+
+## Window controls on the left
+
+```sh
+cosmic-macos-setup apply --window-controls-left     # close, minimize, maximize on the left
+cosmic-macos-setup apply --window-controls-right    # back to COSMIC's default
+```
+
+This sets GNOME's `button-layout` to `close,minimize,maximize:`. Buttons you
+turned off in *Settings › Desktop › Windows* stay off.
+
+cosmic-settings-daemon writes a right-side layout on every login and whenever
+those toggles change, so a plain `gsettings set` does not last. The flag
+installs the user service `cosmic-macos-window-controls.service`, which runs
+`cosmic-macos-setup window-controls-watch` and puts the left layout back each
+time. It sleeps between changes and uses no CPU.
+
+| Moves to the left | Stays on the right |
+|---|---|
+| GTK 3/4 and libadwaita apps (Files from GNOME, Firefox, …) | COSMIC apps (Files, Terminal, Settings): libcosmic always draws them on the right |
+| Chromium, Electron and VS Code when they use the GTK title bar | Windows with COSMIC's server-side title bar (most Qt apps) |
+
+Both "stays on the right" cases need changes in COSMIC itself; see
+[pop-os/cosmic-epoch#640](https://github.com/pop-os/cosmic-epoch/issues/640).
+Running apps pick the change up live; a few need a restart.
+
+## Three-finger drag
+
+Hold three fingers on the touchpad and move to drag a window or select text,
+as on a Mac. libinput supports this since 1.28, but only when the compositor
+turns it on, and cosmic-comp has no setting for it yet. Until it does, the
+separate project [linux-3-finger-drag](https://github.com/lmr97/linux-3-finger-drag)
+does it below the compositor: it takes over the touchpad through evdev and
+turns a three-finger touch into a left-button drag on a virtual device.
+
+It lives in its own repository because it needs root to install and works
+with any desktop. Install it once:
+
+```sh
+git clone https://github.com/lmr97/linux-3-finger-drag
+cd linux-3-finger-drag
+sudo ./install.sh     # udev rule for /dev/uinput, adds you to `input`, user service
+reboot                # the new group only applies after logging in again
+```
+
+Then manage it together with the rest of the profile:
+
+```sh
+cosmic-macos-setup apply --three-finger-drag       # checks access, enables the service
+cosmic-macos-setup apply --no-three-finger-drag    # disables it
+```
+
+`apply --three-finger-drag` lists anything that is still missing before it
+changes anything. Notes:
+
+- Four-finger swipes still switch workspaces. COSMIC does not use three-finger
+  swipes, so nothing conflicts.
+- With tap-to-click on, a three-finger touch waits about 50 ms to tell a tap
+  from a drag. Tune `entryDebounce` and the other timings in
+  `~/.config/linux-3-finger-drag/3fd-config.json`.
+- Being in the `input` group lets your programs read every input device,
+  keyboards included. That is how the tool works; do not add untrusted users.
+- Its logs: `journalctl --user -u three-finger-drag`.
 
 ## Adding global menu support to your app
 
@@ -572,7 +637,8 @@ Or step by step:
 ```sh
 just install                          # ~/.local/bin, ~/.local/share/applications
 cosmic-macos-setup apply --dry-run    # preview every config change
-cosmic-macos-setup apply              # apply (options: --opacity 0.9, --no-weekday, --keep-notifications, --global-menu)
+cosmic-macos-setup apply              # apply (options: --opacity 0.9, --no-weekday, --keep-notifications, --global-menu,
+                                      #   --window-controls-left, --three-finger-drag)
 ```
 
 System-wide: `sudo just prefix=/usr install`.
@@ -586,7 +652,10 @@ just uninstall
 ```
 
 Backups live in `~/.local/state/cosmic-macos-applet/backups/<timestamp>/`
-as plain copies of the COSMIC config files.
+as plain copies of the COSMIC config files. Each backup also records whether
+the window-controls and three-finger-drag services were on, and `restore`
+switches them back to that state. `just uninstall` removes the window-controls
+service; linux-3-finger-drag is uninstalled from its own repository.
 
 ## Configuration
 
@@ -648,6 +717,9 @@ revisions together with the matching `pop-os/cosmic-applets` release.
 ## Limitations
 
 - The global menu is experimental and only covers apps listed above.
+- Window controls move to the left only in GTK and Chromium-based apps.
+- Three-finger drag depends on a separate tool with root-installed access
+  rules, until cosmic-comp exposes libinput's native setting.
 - Quit closes every window of the app. Background processes may keep running.
 - Wi-Fi networks that need a new password open COSMIC Settings; saved and open
   networks connect directly from the popup. New Bluetooth devices are paired in

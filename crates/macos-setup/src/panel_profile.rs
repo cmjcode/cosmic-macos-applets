@@ -52,6 +52,10 @@ pub struct Options {
     /// Turn the experimental global menu on or off; `None` leaves it as is,
     /// so re-running `apply` never silently disables it.
     pub global_menu: Option<bool>,
+    /// Window controls on the left for GTK/Chromium apps; `None` leaves it as is.
+    pub window_controls_left: Option<bool>,
+    /// Three-finger drag through linux-3-finger-drag; `None` leaves it as is.
+    pub three_finger_drag: Option<bool>,
 }
 
 impl Default for Options {
@@ -61,6 +65,8 @@ impl Default for Options {
             clock_weekday: true,
             keep_notifications: false,
             global_menu: None,
+            window_controls_left: None,
+            three_finger_drag: None,
         }
     }
 }
