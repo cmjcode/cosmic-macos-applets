@@ -17,6 +17,7 @@ pub const COMPONENTS: &[&str] = &[
     "com.system76.CosmicPanel.Panel",
     "com.system76.CosmicAppletTime",
     "io.github.jayuda.CosmicMacosActiveApp",
+    "com.system76.CosmicNotifications",
 ];
 const VERSION_DIR: &str = "v1";
 /// Marker written last, so a half-written backup is never picked for restore.

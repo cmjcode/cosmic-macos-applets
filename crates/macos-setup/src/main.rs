@@ -3,7 +3,9 @@
 
 use anyhow::{Context, Result, bail};
 use macos_setup::{
-    Change, Options, RestoreTarget, Restored, Service, backup, panel_profile,
+    Change, Options, Position, RestoreTarget, Restored, Service, backup,
+    notifications::{self, Support},
+    panel_profile,
     profile::{self, on_off},
     window_controls,
 };
@@ -14,6 +16,7 @@ cosmic-macos-setup — macOS-style top bar for COSMIC
 
 USAGE:
     cosmic-macos-setup apply [--dry-run] [--force] [--opacity <0.0-1.0>] [--no-weekday] [--keep-notifications]
+                             [--notifications <position>]
                              [--global-menu | --no-global-menu]
                              [--window-controls-left | --window-controls-right]
                              [--three-finger-drag | --no-three-finger-drag]
@@ -39,6 +42,13 @@ OPTIONS:
     --no-weekday   Do not show the weekday in the clock.
     --keep-notifications
                    Keep COSMIC's notification applet next to the Control Center.
+    --notifications POS
+                   Where notification popups appear: top-left, top, top-right,
+                   bottom-left, bottom, bottom-right, left or right. The first
+                   apply picks top-right, like macOS; later applies keep the
+                   stored choice unless this is given. COSMIC's own daemon
+                   ignores it, so install the patched one once with
+                   `just install-notifications` (see `status`).
     --global-menu  Experimental: show app menus (File, Edit, …) in the bar.
                    Restart apps afterwards; only apps exporting their menu over
                    D-Bus take part (Qt apps, X11 apps such as JetBrains IDEs).
@@ -92,6 +102,13 @@ fn parse(args: &[String]) -> Result<Command> {
                     "--force" => force = true,
                     "--no-weekday" => options.clock_weekday = false,
                     "--keep-notifications" => options.keep_notifications = true,
+                    "--notifications" => {
+                        let value = it.next().context("--notifications needs a position")?;
+                        options.notification_position =
+                            Some(Position::from_name(value).with_context(|| {
+                                format!("--notifications must be one of: {}", Position::names())
+                            })?);
+                    }
                     "--global-menu" => options.global_menu = Some(true),
                     "--no-global-menu" => options.global_menu = Some(false),
                     "--window-controls-left" => options.window_controls_left = Some(true),
@@ -215,6 +232,11 @@ fn run(command: Command) -> Result<()> {
             for service in Service::ALL {
                 println!("service {}: {}", service.name(), on_off(service.enabled()));
             }
+            println!(
+                "notifications: position {}, {}",
+                notifications::stored().map_or("unset", Position::name),
+                support_text(notifications::support())
+            );
             let changes = profile::collect_changes(&profile::current_options())?;
             if changes.is_empty() {
                 println!("profile: applied");
@@ -225,6 +247,19 @@ fn run(command: Command) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// One line on whether the position setting can work in this session.
+fn support_text(support: Support) -> &'static str {
+    match support {
+        Support::Active => "patched daemon running (position is live)",
+        Support::InstalledNotRunning => {
+            "patched daemon installed but not running; log in again or `just restart-notifications`"
+        }
+        Support::Missing => {
+            "COSMIC's daemon ignores the position; run `just install-notifications`"
+        }
+    }
 }
 
 fn main() -> ExitCode {
@@ -261,6 +296,7 @@ mod tests {
                     opacity: 0.5,
                     clock_weekday: false,
                     keep_notifications: true,
+                    notification_position: None,
                     global_menu: Some(true),
                     window_controls_left: None,
                     three_finger_drag: None,
@@ -301,6 +337,21 @@ mod tests {
             parse(&args("window-controls-watch")).unwrap(),
             Command::WindowControlsWatch
         );
+    }
+
+    #[test]
+    fn notification_position_is_parsed_by_name() {
+        let position = |a: &str| match parse(&args(a)).unwrap() {
+            Command::Apply { options, .. } => options.notification_position,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(position("apply"), None);
+        assert_eq!(
+            position("apply --notifications bottom-left"),
+            Some(Position::BottomLeft)
+        );
+        assert!(parse(&args("apply --notifications middle")).is_err());
+        assert!(parse(&args("apply --notifications")).is_err());
     }
 
     #[test]

@@ -6,6 +6,9 @@
 #   just restore      undo `apply` from the latest backup
 #   just uninstall    remove installed files (run `just restore` first)
 #
+#   just install-notifications   patched notification daemon, so popups can
+#                                be placed (sudo, /usr/local/bin)
+#
 # System-wide:  sudo just prefix=/usr install
 
 prefix := env('PREFIX', env('HOME') / '.local')
@@ -56,6 +59,38 @@ apply *args: install
 # Restore the panel configuration saved by the last `apply`.
 restore:
     {{bindir}}/cosmic-macos-setup restore
+
+# --- Notification position ---------------------------------------------------
+# COSMIC's notification daemon ignores its own `anchor` config key and puts
+# popups at the top center when the notifications applet is not in a panel.
+# patches/cosmic-notifications-anchor-fallback.patch makes it use that key in
+# that case. The daemon is built from the COSMIC release the panel ships with,
+# because the two share a private socket protocol: rebuild after upgrades.
+notif_tag := 'epoch-1.8.0'
+notif_src := absolute_path(env('CARGO_TARGET_DIR', 'target') / 'cosmic-notifications')
+notif_patch := justfile_directory() / 'patches/cosmic-notifications-anchor-fallback.patch'
+notif_bin := '/usr/local/bin/cosmic-notifications'
+
+# Fetch cosmic-notifications at the pinned tag, apply the position patch, build.
+build-notifications:
+    [ -d {{notif_src}} ] || git clone --depth 1 --branch {{notif_tag}} https://github.com/pop-os/cosmic-notifications {{notif_src}}
+    git -C {{notif_src}} checkout -- .
+    git -C {{notif_src}} apply {{notif_patch}}
+    rm -f {{notif_src}}/rust-toolchain.toml
+    cd {{notif_src}} && CARGO_TARGET_DIR={{notif_src}}/target RUSTFLAGS="${RUSTFLAGS:-} --cfg tokio_unstable" cargo build --release --locked
+
+# Install the patched daemon to /usr/local/bin (asks for sudo). It starts at the
+# next login, or right away with `just restart-notifications`.
+install-notifications: build-notifications
+    sudo install -Dm0755 {{notif_src}}/target/release/cosmic-notifications {{notif_bin}}
+
+# Stop the running daemon; cosmic-session starts the installed one and reloads the panel.
+restart-notifications:
+    kill $(pidof cosmic-notifications)
+
+# Remove the patched daemon. COSMIC's own is back after the next login or restart.
+uninstall-notifications:
+    sudo rm -f {{notif_bin}}
 
 # Remove everything `install` created. Backups in ~/.local/state are kept.
 uninstall:

@@ -7,6 +7,8 @@ use cosmic_panel_config::{AutoHide, CosmicPanelBackground, PanelAnchor, PanelSiz
 use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 
+use crate::notifications::Position;
+
 pub const PANEL_COMPONENT: &str = "com.system76.CosmicPanel.Panel";
 pub const PANEL_LIST_COMPONENT: &str = "com.system76.CosmicPanel";
 pub const TIME_COMPONENT: &str = "com.system76.CosmicAppletTime";
@@ -49,6 +51,10 @@ pub struct Options {
     pub clock_weekday: bool,
     /// Keep COSMIC's notification applet (notification history) in the bar.
     pub keep_notifications: bool,
+    /// Where notification popups appear (needs the patched daemon, see
+    /// `notifications`); `None` keeps the stored choice, or picks the macOS
+    /// default the first time.
+    pub notification_position: Option<Position>,
     /// Turn the experimental global menu on or off; `None` leaves it as is,
     /// so re-running `apply` never silently disables it.
     pub global_menu: Option<bool>,
@@ -64,6 +70,7 @@ impl Default for Options {
             opacity: 0.8,
             clock_weekday: true,
             keep_notifications: false,
+            notification_position: None,
             global_menu: None,
             window_controls_left: None,
             three_finger_drag: None,
@@ -77,6 +84,7 @@ impl PartialEq for Options {
         (self.opacity - other.opacity).abs() < f32::EPSILON
             && self.clock_weekday == other.clock_weekday
             && self.keep_notifications == other.keep_notifications
+            && self.notification_position == other.notification_position
             && self.global_menu == other.global_menu
             && self.window_controls_left == other.window_controls_left
             && self.three_finger_drag == other.three_finger_drag
@@ -101,7 +109,7 @@ impl Change {
     }
 }
 
-fn diff<T>(
+pub(crate) fn diff<T>(
     config: &Config,
     component: &'static str,
     key: &'static str,

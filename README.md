@@ -42,11 +42,42 @@ networks, paired devices, or audio outputs.
 | `cosmic-macos-setup` | CLI | Backs up and then rewrites the panel config. The panel reloads live. `restore` undoes it. |
 | Top Bar Settings | app `io.github.jayuda.CosmicMacosSettings` | Everything below without a terminal. Opens from the system menu or the app launcher. |
 | Window controls on the left | opt-in, `--window-controls-left` | Close, minimize and maximize on the left in GTK apps, Firefox, Chromium and Telegram. See below. |
+| Notification position | `--notifications top-right` and a patched daemon | Popups in any corner or at the top or bottom center. See below. |
 | Three-finger drag | opt-in, `--three-finger-drag` | Switches on [linux-3-finger-drag](https://github.com/lmr97/linux-3-finger-drag), installed separately. See below. |
 
 The tray, input source, battery and clock stay COSMIC's own applets. The
 Control Center replaces COSMIC's audio, Bluetooth, network and notification
 applets; pass `--keep-notifications` to keep notification history in the bar.
+
+## Notification position
+
+COSMIC's notification daemon shows popups next to its notifications applet,
+and at the top center when no panel holds that applet, which is what the
+macOS profile leaves you with. Nothing in COSMIC Settings moves them. The
+daemon's config has an `anchor` key (`com.system76.CosmicNotifications`)
+that the daemon never reads, so this project ships a small patch,
+[patches/cosmic-notifications-anchor-fallback.patch](patches/cosmic-notifications-anchor-fallback.patch),
+that makes it honor that key whenever the applet is absent. With the applet
+in a panel nothing changes.
+
+```sh
+just install-notifications                        # builds COSMIC 1.8's daemon with the patch, installs to /usr/local/bin (sudo)
+just restart-notifications                        # or log in again; cosmic-session restarts the daemon and the panel
+cosmic-macos-setup apply --notifications top-right
+```
+
+Positions: `top-left`, `top`, `top-right`, `bottom-left`, `bottom`,
+`bottom-right`, `left`, `right`. The first `apply` picks `top-right`, like
+macOS; later applies keep the stored choice. In Top Bar Settings the position
+is a dropdown that takes effect immediately, and the page says whether the
+patched daemon is running, installed but not started, or missing.
+
+`/usr/local/bin` precedes `/usr/bin` in the session's PATH, so cosmic-session
+starts the patched daemon and package updates never overwrite it. Run
+`just install-notifications` again after a COSMIC upgrade, because the panel
+and the daemon share a private socket protocol. `just uninstall-notifications`
+returns to the packaged daemon at the next login. `cosmic-macos-setup status`
+shows the stored position and which daemon is running.
 
 ## Global menu (experimental)
 
@@ -645,8 +676,8 @@ Or step by step:
 ```sh
 just install                          # ~/.local/bin, ~/.local/share/applications
 cosmic-macos-setup apply --dry-run    # preview every config change
-cosmic-macos-setup apply              # apply (options: --opacity 0.9, --no-weekday, --keep-notifications, --global-menu,
-                                      #   --window-controls-left, --three-finger-drag)
+cosmic-macos-setup apply              # apply (options: --opacity 0.9, --no-weekday, --keep-notifications, --notifications top-right,
+                                      #   --global-menu, --window-controls-left, --three-finger-drag)
 ```
 
 System-wide: `sudo just prefix=/usr install`.
@@ -676,7 +707,7 @@ launcher. It is laid out like COSMIC Settings, with search in the header.
 
 | Page | What it changes |
 |---|---|
-| Top Bar | Apply the profile, panel opacity, weekday, notifications applet, undo the last change, restore the original panel |
+| Top Bar | Apply the profile, panel opacity, weekday, notifications applet, popup position and daemon status, undo the last change, restore the original panel |
 | System Menu | Menu entries, power confirmation, panel icon |
 | Active App | Bold label, longest name, empty label, per-monitor focus, global menu |
 | Control Center | Show, hide and reorder blocks, Now Playing, volume limit |

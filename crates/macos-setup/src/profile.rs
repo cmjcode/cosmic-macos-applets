@@ -6,7 +6,7 @@ use cosmic_config::{Config, ConfigGet};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    backup,
+    backup, notifications,
     panel_profile::{self, Change, Options},
     three_finger_drag, window_controls,
 };
@@ -125,6 +125,8 @@ pub fn collect_changes(options: &Options) -> Result<Vec<Change>> {
     let mut changes = panel_profile::panel_changes(&panel, options, right);
     changes.extend(panel_profile::time_changes(&time, options));
     changes.extend(panel_profile::active_app_changes(&active_app, options));
+    let popups = open(notifications::COMPONENT)?;
+    changes.extend(notifications::changes(&popups, options));
     Ok(changes)
 }
 
@@ -146,7 +148,12 @@ pub fn profile_applied() -> bool {
 /// keeps what the user tuned. Defaults while the profile is not applied.
 #[must_use]
 pub fn current_options() -> Options {
-    let mut options = Options::default();
+    // The position is independent of the panel layout, so it is read even
+    // while the profile is not applied.
+    let mut options = Options {
+        notification_position: notifications::stored(),
+        ..Options::default()
+    };
     let Some((left, right)) = wings() else {
         return options;
     };

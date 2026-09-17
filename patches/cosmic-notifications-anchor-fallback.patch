@@ -1,0 +1,63 @@
+diff --git a/src/app.rs b/src/app.rs
+index 6e0ea20..c68c6e0 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -21,7 +21,7 @@ use cosmic::surface;
+ use cosmic::surface::action::LiveSettings;
+ use cosmic::widget::{autosize, button, icon, text};
+ use cosmic::{Application, Element, app::Task};
+-use cosmic_notifications_config::NotificationsConfig;
++use cosmic_notifications_config::{Anchor as ConfigAnchor, NotificationsConfig};
+ use cosmic_notifications_util::markup::html_to_spans;
+ use cosmic_notifications_util::{ActionId, CloseReason, Notification};
+ use cosmic_panel_config::{CosmicPanelConfig, CosmicPanelOuput, PanelAnchor};
+@@ -264,7 +264,7 @@ impl CosmicNotifications {
+                     None
+                 })
+             })
+-            .unwrap_or((Anchor::TOP, None))
++            .unwrap_or_else(|| (configured_anchor(&self.config.anchor), None))
+     }
+ 
+     fn push_notification(
+@@ -301,6 +301,9 @@ impl CosmicNotifications {
+         }];
+ 
+         if self.cards.is_empty() && !self.config.do_not_disturb {
++            if self.anchor.is_none() {
++                self.anchor = Some(self.anchor_for_notification_applet());
++            }
+             let (anchor, _output) = self.anchor.clone().unwrap_or((Anchor::TOP, None));
+             self.active_surface = true;
+             tasks.push(get_layer_surface(SctkLayerSurfaceSettings {
+@@ -693,6 +696,22 @@ impl CosmicNotifications {
+     }
+ }
+ 
++/// Screen corner or edge used when no panel or dock hosts the notifications
++/// applet, taken from the `anchor` key of the notifications config.
++fn configured_anchor(anchor: &ConfigAnchor) -> Anchor {
++    tracing::info!("cosmic-macos-applet: anchor from config: {anchor:?}");
++    match anchor {
++        ConfigAnchor::Top => Anchor::TOP,
++        ConfigAnchor::Bottom => Anchor::BOTTOM,
++        ConfigAnchor::Left => Anchor::LEFT,
++        ConfigAnchor::Right => Anchor::RIGHT,
++        ConfigAnchor::TopLeft => Anchor::TOP.union(Anchor::LEFT),
++        ConfigAnchor::TopRight => Anchor::TOP.union(Anchor::RIGHT),
++        ConfigAnchor::BottomLeft => Anchor::BOTTOM.union(Anchor::LEFT),
++        ConfigAnchor::BottomRight => Anchor::BOTTOM.union(Anchor::RIGHT),
++    }
++}
++
+ impl cosmic::Application for CosmicNotifications {
+     type Message = Message;
+     type Executor = cosmic::executor::single::Executor;
+@@ -807,6 +826,7 @@ impl cosmic::Application for CosmicNotifications {
+             }
+             Message::Config(config) => {
+                 self.config = config;
++                self.anchor = Some(self.anchor_for_notification_applet());
+             }
+             Message::PanelConfig(c) => {
+                 self.panel_config = c;

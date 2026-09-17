@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Top Bar: apply or restore the profile and tune the panel's look.
+//! Top Bar: apply or restore the profile, tune the panel's look and place
+//! notification popups.
 
 use cosmic::Element;
 use cosmic::app::Task;
 use cosmic::iced::{Alignment, Length};
-use cosmic::widget::{self, button, row, settings, text};
+use cosmic::widget::{self, button, column, row, settings, text};
 use cosmic_config::{Config, ConfigSet};
-use macos_setup::{Options, backup, panel_profile, profile};
+use macos_setup::{
+    Options, backup,
+    notifications::{self, Position, Support},
+    panel_profile, profile,
+};
 
 use super::{SectionDef, blocking, error_text};
 use crate::{app, fl};
@@ -19,6 +24,8 @@ pub struct Snapshot {
     missing_applets: Vec<&'static str>,
     options: Options,
     backups: usize,
+    /// Whether the session's notification daemon reads the position.
+    support: Support,
 }
 
 fn load() -> Snapshot {
@@ -32,6 +39,7 @@ fn load() -> Snapshot {
         backups: backup::backups_dir()
             .and_then(|dir| backup::list(&dir))
             .map_or(0, |list| list.len()),
+        support: notifications::support(),
         options,
     }
 }
@@ -50,6 +58,9 @@ pub enum Message {
     OpacityReleased,
     Weekday(bool),
     KeepNotifications(bool),
+    /// Index into `Position::CHOICES`.
+    Position(usize),
+    CopyNotificationCommands,
     Apply,
     UndoLast,
     ConfirmRestoreOriginal(bool),
@@ -136,6 +147,20 @@ impl Page {
                     return self.apply_profile();
                 }
             }
+            Message::Position(index) => {
+                let Some(position) = Position::CHOICES.get(index).copied() else {
+                    return Task::none();
+                };
+                if let Some(s) = self.snapshot.as_mut() {
+                    s.options.notification_position = Some(position);
+                }
+                // Not part of the panel layout: the daemon watches this key
+                // and moves the popups at once, like COSMIC Settings would.
+                write(notifications::COMPONENT, notifications::KEY, position);
+            }
+            Message::CopyNotificationCommands => {
+                return cosmic::iced::clipboard::write(notifications::INSTALL_COMMANDS.to_owned());
+            }
             Message::Apply => return self.apply_profile(),
             Message::UndoLast => {
                 return self.run(|| {
@@ -171,6 +196,10 @@ impl Page {
                     fl!("keep-notifications"),
                 ],
             ),
+            SectionDef::new(
+                fl!("notifications"),
+                [fl!("notification-position"), fl!("notifications-daemon")],
+            ),
             SectionDef::new(fl!("backups"), [fl!("undo-last"), fl!("restore-original")]),
         ]
     }
@@ -184,6 +213,7 @@ impl Page {
         let element: Element<'_, Message> = match index {
             0 => self.profile_section(snapshot),
             1 => self.appearance_section(snapshot),
+            2 => self.notifications_section(snapshot),
             _ => self.backups_section(snapshot),
         };
         element.map(super::Message::TopBar)
@@ -249,6 +279,62 @@ impl Page {
             .into()
     }
 
+    fn notifications_section<'a>(&'a self, s: &'a Snapshot) -> Element<'a, Message> {
+        let labels: Vec<String> = Position::CHOICES
+            .iter()
+            .map(|p| position_label(*p))
+            .collect();
+        let selected = s
+            .options
+            .notification_position
+            .and_then(|p| Position::CHOICES.iter().position(|c| *c == p));
+        // With the applet in the bar the daemon puts popups next to it.
+        let description = if s.options.keep_notifications {
+            fl!("notification-position-applet")
+        } else {
+            fl!("notification-position-description")
+        };
+        let mut section = settings::section().title(fl!("notifications")).add(
+            settings::item::builder(fl!("notification-position"))
+                .description(description)
+                .control(widget::dropdown(labels, selected, Message::Position)),
+        );
+        section = match s.support {
+            Support::Active => section.add(
+                settings::item::builder(fl!("notifications-daemon"))
+                    .description(fl!("notifications-daemon-active"))
+                    .control(widget::icon::from_name("emblem-ok-symbolic").size(16)),
+            ),
+            Support::InstalledNotRunning => section.add(
+                settings::item::builder(fl!("notifications-daemon"))
+                    .description(fl!("notifications-daemon-installed"))
+                    .control(widget::icon::from_name("dialog-warning-symbolic").size(16)),
+            ),
+            Support::Missing => {
+                let spacing = cosmic::theme::spacing();
+                let help = column::with_capacity(3)
+                    .push(text::body(fl!("notifications-daemon-missing")))
+                    .push(
+                        widget::container(text::monotext(notifications::INSTALL_COMMANDS))
+                            .padding(spacing.space_xs)
+                            .class(cosmic::theme::Container::Card)
+                            .width(Length::Fill),
+                    )
+                    .push(
+                        button::standard(fl!("copy-commands"))
+                            .on_press(Message::CopyNotificationCommands),
+                    )
+                    .spacing(spacing.space_xs);
+                section
+                    .add(settings::item_row(vec![
+                        text::body(fl!("notifications-daemon")).into(),
+                    ]))
+                    .add(settings::item_row(vec![help.into()]))
+            }
+        };
+        section.into()
+    }
+
     fn backups_section<'a>(&'a self, s: &'a Snapshot) -> Element<'a, Message> {
         let can_restore = s.backups > 0 && !self.busy;
         settings::section()
@@ -284,6 +370,19 @@ impl Page {
             )
             .into();
         Some(dialog.map(super::Message::TopBar))
+    }
+}
+
+fn position_label(position: Position) -> String {
+    match position {
+        Position::Top => fl!("position-top"),
+        Position::Bottom => fl!("position-bottom"),
+        Position::Left => fl!("position-left"),
+        Position::Right => fl!("position-right"),
+        Position::TopLeft => fl!("position-top-left"),
+        Position::TopRight => fl!("position-top-right"),
+        Position::BottomLeft => fl!("position-bottom-left"),
+        Position::BottomRight => fl!("position-bottom-right"),
     }
 }
 
