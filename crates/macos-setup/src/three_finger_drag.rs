@@ -63,13 +63,24 @@ pub fn enabled() -> bool {
     user_service::is_enabled(UNIT)
 }
 
-/// Fail early, before `apply` writes anything, when enabling cannot work.
-pub fn check_can_enable() -> Result<()> {
-    let missing = missing_prerequisites(
+/// What is still missing on this machine. Runs `systemctl`; call off the UI thread.
+#[must_use]
+pub fn missing_now() -> Vec<&'static str> {
+    missing_prerequisites(
         user_service::exists(UNIT),
         input_readable(),
         uinput_writable(),
-    );
+    )
+}
+
+/// Shell commands that install linux-3-finger-drag.
+pub const INSTALL_COMMANDS: &str = "git clone https://github.com/lmr97/linux-3-finger-drag\n\
+                                    cd linux-3-finger-drag && sudo ./install.sh\n\
+                                    reboot";
+
+/// Fail early, before `apply` writes anything, when enabling cannot work.
+pub fn check_can_enable() -> Result<()> {
+    let missing = missing_now();
     if missing.is_empty() {
         return Ok(());
     }

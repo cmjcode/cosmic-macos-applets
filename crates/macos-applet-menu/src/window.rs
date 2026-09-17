@@ -28,6 +28,7 @@ const DEFAULT_ICON_SVG: &[u8] =
 pub enum Launch {
     About,
     Settings,
+    TopBarSettings,
     AppStore,
 }
 
@@ -36,13 +37,37 @@ impl Launch {
         match self {
             Self::About => &["cosmic-settings", "about"],
             Self::Settings => &["cosmic-settings"],
+            Self::TopBarSettings => &[TOP_BAR_SETTINGS],
             Self::AppStore => &["cosmic-store"],
         }
     }
 
     fn exec(self) -> String {
+        if self == Self::TopBarSettings {
+            // The panel's PATH may lack ~/.local/bin, so prefer the link
+            // installed next to this binary.
+            let exe = std::env::current_exe().ok();
+            return sibling_program(exe.as_deref(), TOP_BAR_SETTINGS, |p| p.exists());
+        }
         self.command().join(" ")
     }
+}
+
+const TOP_BAR_SETTINGS: &str = "cosmic-macos-settings";
+
+/// `<dir of exe>/<program>` when it exists, otherwise the bare program name.
+fn sibling_program(
+    exe: Option<&std::path::Path>,
+    program: &str,
+    exists: impl Fn(&std::path::Path) -> bool,
+) -> String {
+    exe.and_then(std::path::Path::parent)
+        .map(|dir| dir.join(program))
+        .filter(|path| exists(path) && !path.to_string_lossy().contains(char::is_whitespace))
+        .map_or_else(
+            || program.to_owned(),
+            |path| path.to_string_lossy().into_owned(),
+        )
 }
 
 pub struct MenuApplet {
@@ -297,6 +322,10 @@ impl cosmic::Application for MenuApplet {
             fl!("system-settings"),
             Message::Launch(Launch::Settings),
         ));
+        top = top.push(item(
+            fl!("top-bar-settings"),
+            Message::Launch(Launch::TopBarSettings),
+        ));
         if self.config.show_app_store && self.has_app_store {
             top = top.push(item(fl!("app-store"), Message::Launch(Launch::AppStore)));
         }
@@ -327,5 +356,35 @@ impl cosmic::Application for MenuApplet {
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
         Some(cosmic::applet::style())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn top_bar_settings_prefers_the_installed_link() {
+        let exe = Path::new("/home/u/.local/bin/cosmic-macos-applets");
+        assert_eq!(
+            sibling_program(Some(exe), TOP_BAR_SETTINGS, |_| true),
+            "/home/u/.local/bin/cosmic-macos-settings"
+        );
+        assert_eq!(
+            sibling_program(Some(exe), TOP_BAR_SETTINGS, |_| false),
+            TOP_BAR_SETTINGS
+        );
+        assert_eq!(
+            sibling_program(Some(Path::new("/my apps/bin/x")), TOP_BAR_SETTINGS, |_| {
+                true
+            }),
+            TOP_BAR_SETTINGS,
+            "exec strings are split on whitespace"
+        );
+        assert_eq!(
+            sibling_program(None, TOP_BAR_SETTINGS, |_| true),
+            TOP_BAR_SETTINGS
+        );
     }
 }

@@ -1002,6 +1002,7 @@ dependencies = [
  "macos-applet-control-center",
  "macos-applet-menu",
  "macos-common",
+ "macos-settings",
  "tracing",
 ]
 
@@ -3386,6 +3387,23 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "zbus",
+]
+
+[[package]]
+name = "macos-settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cosmic-config",
+ "i18n-embed",
+ "i18n-embed-fl",
+ "libcosmic",
+ "macos-common",
+ "macos-setup",
+ "rust-embed",
+ "serde",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

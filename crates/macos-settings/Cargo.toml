@@ -1,0 +1,21 @@
+[package]
+name = "macos-settings"
+description = "Settings window for the COSMIC macOS top bar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+macos-common.workspace = true
+macos-setup.workspace = true
+anyhow.workspace = true
+cosmic-config.workspace = true
+i18n-embed.workspace = true
+i18n-embed-fl.workspace = true
+libcosmic.workspace = true
+rust-embed.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true

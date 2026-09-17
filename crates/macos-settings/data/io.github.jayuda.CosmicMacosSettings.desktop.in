@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Top Bar Settings
+Name[id]=Pengaturan Top Bar
+Comment=Configure the macOS-style top bar, window controls and three-finger drag
+Comment[id]=Atur top bar gaya macOS, tombol window, dan drag tiga jari
+Exec=@bindir@/cosmic-macos-settings
+Icon=preferences-system
+Terminal=false
+Categories=Settings;DesktopSettings;
+Keywords=COSMIC;panel;top bar;menu bar;macOS;window controls;touchpad;
+StartupNotify=true
+X-GNOME-UsesNotifications=false

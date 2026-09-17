@@ -11,6 +11,8 @@ pub const MENU_APP_ID: &str = "io.github.jayuda.CosmicMacosMenu";
 pub const ACTIVE_APP_APP_ID: &str = "io.github.jayuda.CosmicMacosActiveApp";
 /// App id (and `.desktop` file stem) of the Control Center applet.
 pub const CONTROL_CENTER_APP_ID: &str = "io.github.jayuda.CosmicMacosControlCenter";
+/// App id of the `cosmic-macos-settings` window.
+pub const SETTINGS_APP_ID: &str = "io.github.jayuda.CosmicMacosSettings";
 
 /// Initialise logging once per process.
 ///

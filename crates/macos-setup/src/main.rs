@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! `cosmic-macos-setup`: apply or restore the macOS-style COSMIC top bar.
 
-mod backup;
-mod panel_profile;
-mod three_finger_drag;
-mod user_service;
-mod window_controls;
-
 use anyhow::{Context, Result, bail};
-use cosmic_config::{Config, ConfigGet};
-use panel_profile::{Change, Options};
+use macos_setup::{
+    Change, Options, RestoreTarget, Restored, Service, backup, panel_profile,
+    profile::{self, on_off},
+    window_controls,
+};
 use std::{path::PathBuf, process::ExitCode};
 
 const USAGE: &str = "\
@@ -67,13 +64,6 @@ returns them to their state at backup time.
 ";
 
 #[derive(Debug, PartialEq)]
-enum RestoreTarget {
-    Latest,
-    First,
-    Dir(PathBuf),
-}
-
-#[derive(Debug, PartialEq)]
 enum Command {
     Apply {
         dry_run: bool,
@@ -85,17 +75,6 @@ enum Command {
     Status,
     WindowControlsWatch,
     Help,
-}
-
-impl PartialEq for Options {
-    fn eq(&self, other: &Self) -> bool {
-        (self.opacity - other.opacity).abs() < f32::EPSILON
-            && self.clock_weekday == other.clock_weekday
-            && self.keep_notifications == other.keep_notifications
-            && self.global_menu == other.global_menu
-            && self.window_controls_left == other.window_controls_left
-            && self.three_finger_drag == other.three_finger_drag
-    }
 }
 
 fn parse(args: &[String]) -> Result<Command> {
@@ -154,10 +133,6 @@ fn parse(args: &[String]) -> Result<Command> {
     }
 }
 
-fn open(component: &str) -> Result<Config> {
-    Config::new(component, 1).with_context(|| format!("open config {component}"))
-}
-
 fn print_changes(changes: &[Change]) {
     for change in changes {
         println!(
@@ -167,133 +142,15 @@ fn print_changes(changes: &[Change]) {
     }
 }
 
-fn collect_changes(options: &Options) -> Result<Vec<Change>> {
-    let entries: Vec<String> = open(panel_profile::PANEL_LIST_COMPONENT)?
-        .get("entries")
-        .unwrap_or_default();
-    if !entries.iter().any(|e| e == "Panel") {
-        bail!(
-            "no COSMIC panel named \"Panel\" is configured (found: {entries:?}).\n\
-             Enable the top panel in Settings › Desktop › Panel first."
-        );
-    }
-
-    let panel = open(panel_profile::PANEL_COMPONENT)?;
-    let time = open(panel_profile::TIME_COMPONENT)?;
-    let active_app = open(panel_profile::ACTIVE_APP_COMPONENT)?;
-    let right = panel_profile::right_applets(options, panel_profile::applet_installed);
-    let mut changes = panel_profile::panel_changes(&panel, options, right);
-    changes.extend(panel_profile::time_changes(&time, options));
-    changes.extend(panel_profile::active_app_changes(&active_app, options));
-    Ok(changes)
-}
-
-/// A session tweak that lives in a user service rather than in cosmic-config.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Service {
-    WindowControlsLeft,
-    ThreeFingerDrag,
-}
-
-impl Service {
-    const ALL: [Self; 2] = [Self::WindowControlsLeft, Self::ThreeFingerDrag];
-
-    /// Stable name used in backups.
-    fn name(self) -> &'static str {
-        match self {
-            Self::WindowControlsLeft => "window-controls-left",
-            Self::ThreeFingerDrag => "three-finger-drag",
-        }
-    }
-
-    fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|s| s.name() == name)
-    }
-
-    fn requested(self, options: &Options) -> Option<bool> {
-        match self {
-            Self::WindowControlsLeft => options.window_controls_left,
-            Self::ThreeFingerDrag => options.three_finger_drag,
-        }
-    }
-
-    fn enabled(self) -> bool {
-        match self {
-            Self::WindowControlsLeft => window_controls::enabled(),
-            Self::ThreeFingerDrag => three_finger_drag::enabled(),
-        }
-    }
-
-    fn set_enabled(self, enable: bool) -> Result<()> {
-        match self {
-            Self::WindowControlsLeft => window_controls::set_enabled(enable),
-            Self::ThreeFingerDrag => three_finger_drag::set_enabled(enable),
-        }
-        .with_context(|| format!("switch {} {}", self.name(), on_off(enable)))
-    }
-}
-
-fn on_off(enabled: bool) -> &'static str {
-    if enabled { "on" } else { "off" }
-}
-
-/// Services whose requested state differs from `current`, in a stable order.
-fn service_changes(options: &Options, current: impl Fn(Service) -> bool) -> Vec<(Service, bool)> {
-    Service::ALL
-        .into_iter()
-        .filter_map(|s| s.requested(options).map(|want| (s, want)))
-        .filter(|&(s, want)| current(s) != want)
-        .collect()
-}
-
-fn service_states() -> Vec<(&'static str, bool)> {
-    Service::ALL
-        .into_iter()
-        .map(|s| (s.name(), s.enabled()))
-        .collect()
-}
-
-/// Put config and services back to `backup`, returning the config key count.
-fn restore_from(backup_dir: &std::path::Path) -> Result<usize> {
-    let saved = backup::services(backup_dir)?;
-    let changes = backup::restore(&backup::cosmic_config_dir()?, backup_dir)?;
-    for (name, want) in saved {
-        let Some(service) = Service::from_name(&name) else {
-            continue;
-        };
-        if service.enabled() != want {
-            service.set_enabled(want)?;
-            println!("  {} {}", service.name(), on_off(want));
-        }
-    }
-    Ok(changes)
-}
-
 fn apply(dry_run: bool, force: bool, options: &Options) -> Result<()> {
-    let missing: Vec<&str> = panel_profile::OWN_APPLETS
-        .iter()
-        .copied()
-        .filter(|id| !panel_profile::applet_installed(id))
-        .collect();
-    if !missing.is_empty() && !force {
-        bail!(
-            "these applets are not installed: {missing:?}\n\
-             Run `just install` first, or pass --force."
-        );
-    }
-
-    let changes = collect_changes(options)?;
-    let services = service_changes(options, Service::enabled);
-    if services.contains(&(Service::ThreeFingerDrag, true)) {
-        three_finger_drag::check_can_enable()?;
-    }
-    if changes.is_empty() && services.is_empty() {
+    let plan = profile::plan(options, force)?;
+    if plan.is_empty() {
         println!("The macOS profile is already applied. Nothing to do.");
         return Ok(());
     }
-    println!("{} setting(s) will change:", changes.len() + services.len());
-    print_changes(&changes);
-    for (service, want) in &services {
+    println!("{} setting(s) will change:", plan.len());
+    print_changes(&plan.changes);
+    for (service, want) in &plan.services {
         println!(
             "  service {}\n      {} -> {}",
             service.name(),
@@ -305,25 +162,8 @@ fn apply(dry_run: bool, force: bool, options: &Options) -> Result<()> {
         println!("\nDry run: nothing was written.");
         return Ok(());
     }
-
-    let backup_dir = backup::create(
-        &backup::cosmic_config_dir()?,
-        &backup::backups_dir()?,
-        &service_states(),
-    )
-    .context("backup failed; nothing was changed")?;
-    println!("\nBackup saved to {}", backup_dir.display());
-
-    let result = changes.iter().try_for_each(Change::apply).and_then(|()| {
-        services
-            .iter()
-            .try_for_each(|&(service, want)| service.set_enabled(want))
-    });
-    if let Err(error) = result {
-        eprintln!("error: {error:#}\nRolling back…");
-        restore_from(&backup_dir)
-            .context("rollback failed; restore manually with `cosmic-macos-setup restore`")?;
-        bail!("apply failed and the previous configuration was restored");
+    if let Some(backup_dir) = profile::execute(&plan)? {
+        println!("\nBackup saved to {}", backup_dir.display());
     }
     println!(
         "Applied. Undo with `cosmic-macos-setup restore` (or `restore --first` for the original panel)"
@@ -332,18 +172,15 @@ fn apply(dry_run: bool, force: bool, options: &Options) -> Result<()> {
 }
 
 fn restore(target: RestoreTarget) -> Result<()> {
-    let dir = match target {
-        RestoreTarget::Dir(dir) => dir,
-        RestoreTarget::Latest => backup::list(&backup::backups_dir()?)?
-            .pop()
-            .context("no backups found")?,
-        RestoreTarget::First => backup::list(&backup::backups_dir()?)?
-            .into_iter()
-            .next()
-            .context("no backups found")?,
-    };
-    let changes = restore_from(&dir)?;
-    println!("Restored {} ({changes} key(s) changed).", dir.display());
+    let Restored {
+        backup,
+        keys,
+        services,
+    } = profile::restore(target)?;
+    for (service, want) in services {
+        println!("  {} {}", service.name(), on_off(want));
+    }
+    println!("Restored {} ({keys} key(s) changed).", backup.display());
     Ok(())
 }
 
@@ -378,7 +215,7 @@ fn run(command: Command) -> Result<()> {
             for service in Service::ALL {
                 println!("service {}: {}", service.name(), on_off(service.enabled()));
             }
-            let changes = collect_changes(&Options::default())?;
+            let changes = profile::collect_changes(&profile::current_options())?;
             if changes.is_empty() {
                 println!("profile: applied");
             } else {
@@ -464,28 +301,6 @@ mod tests {
             parse(&args("window-controls-watch")).unwrap(),
             Command::WindowControlsWatch
         );
-    }
-
-    #[test]
-    fn only_services_that_differ_change() {
-        let options = Options {
-            window_controls_left: Some(true),
-            three_finger_drag: Some(false),
-            ..Options::default()
-        };
-        // Window controls already left, drag currently on: only drag changes.
-        let got = service_changes(&options, |_| true);
-        assert_eq!(got, vec![(Service::ThreeFingerDrag, false)]);
-        // Unrequested services never change.
-        assert!(service_changes(&Options::default(), |_| false).is_empty());
-    }
-
-    #[test]
-    fn service_names_round_trip() {
-        for service in Service::ALL {
-            assert_eq!(Service::from_name(service.name()), Some(service));
-        }
-        assert_eq!(Service::from_name("bogus"), None);
     }
 
     #[test]

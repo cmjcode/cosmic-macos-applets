@@ -23,9 +23,10 @@ fn main() -> cosmic::iced::Result {
         "cosmic-macos-menu" => macos_applet_menu::run(),
         "cosmic-macos-active-app" => macos_applet_active_app::run(),
         "cosmic-macos-control-center" => macos_applet_control_center::run(),
+        "cosmic-macos-settings" => macos_settings::run(),
         _ => {
             eprintln!(
-                "cosmic-macos-applets v{VERSION}\nusage: cosmic-macos-applets <cosmic-macos-menu|cosmic-macos-active-app|cosmic-macos-control-center>"
+                "cosmic-macos-applets v{VERSION}\nusage: cosmic-macos-applets <cosmic-macos-menu|cosmic-macos-active-app|cosmic-macos-control-center|cosmic-macos-settings>"
             );
             std::process::exit(2);
         }

@@ -6,6 +6,7 @@ members = [
     "crates/macos-applet-active-app",
     "crates/macos-applet-control-center",
     "crates/macos-setup",
+    "crates/macos-settings",
     "crates/cosmic-macos-applets",
 ]
 default-members = ["crates/cosmic-macos-applets", "crates/macos-setup"]
@@ -25,6 +26,8 @@ macos-common = { path = "crates/macos-common" }
 macos-applet-menu = { path = "crates/macos-applet-menu" }
 macos-applet-active-app = { path = "crates/macos-applet-active-app" }
 macos-applet-control-center = { path = "crates/macos-applet-control-center" }
+macos-setup = { path = "crates/macos-setup" }
+macos-settings = { path = "crates/macos-settings" }
 
 # Git dependencies are declared like pop-os/cosmic-applets (no `rev`) so that
 # transitive references from cosmic-panel-config / cosmic-settings-config end

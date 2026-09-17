@@ -71,6 +71,18 @@ impl Default for Options {
     }
 }
 
+/// Float-tolerant comparison, so parsed options can be compared in tests.
+impl PartialEq for Options {
+    fn eq(&self, other: &Self) -> bool {
+        (self.opacity - other.opacity).abs() < f32::EPSILON
+            && self.clock_weekday == other.clock_weekday
+            && self.keep_notifications == other.keep_notifications
+            && self.global_menu == other.global_menu
+            && self.window_controls_left == other.window_controls_left
+            && self.three_finger_drag == other.three_finger_drag
+    }
+}
+
 type Writer = Box<dyn Fn() -> Result<(), cosmic_config::Error>>;
 
 /// One key that differs from the profile.

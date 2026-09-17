@@ -16,10 +16,11 @@ icondir := sharedir / 'icons/hicolor/scalable/apps'
 target := env('CARGO_TARGET_DIR', 'target') / 'release'
 
 multicall := 'cosmic-macos-applets'
-applets := 'cosmic-macos-menu cosmic-macos-active-app cosmic-macos-control-center'
+applets := 'cosmic-macos-menu cosmic-macos-active-app cosmic-macos-control-center cosmic-macos-settings'
 menu_id := 'io.github.jayuda.CosmicMacosMenu'
 active_id := 'io.github.jayuda.CosmicMacosActiveApp'
 cc_id := 'io.github.jayuda.CosmicMacosControlCenter'
+settings_id := 'io.github.jayuda.CosmicMacosSettings'
 
 default: build
 
@@ -42,6 +43,7 @@ install: build
     sed 's|@bindir@|{{bindir}}|g' crates/macos-applet-menu/data/{{menu_id}}.desktop.in > {{appdir}}/{{menu_id}}.desktop
     sed 's|@bindir@|{{bindir}}|g' crates/macos-applet-active-app/data/{{active_id}}.desktop.in > {{appdir}}/{{active_id}}.desktop
     sed 's|@bindir@|{{bindir}}|g' crates/macos-applet-control-center/data/{{cc_id}}.desktop.in > {{appdir}}/{{cc_id}}.desktop
+    sed 's|@bindir@|{{bindir}}|g' crates/macos-settings/data/{{settings_id}}.desktop.in > {{appdir}}/{{settings_id}}.desktop
     install -Dm0644 crates/macos-applet-menu/data/icons/scalable/apps/{{menu_id}}-symbolic.svg {{icondir}}/{{menu_id}}-symbolic.svg
     install -Dm0644 crates/macos-applet-control-center/data/icons/scalable/apps/{{cc_id}}-symbolic.svg {{icondir}}/{{cc_id}}-symbolic.svg
     -gtk-update-icon-cache -qtf {{sharedir}}/icons/hicolor 2>/dev/null
@@ -62,5 +64,5 @@ uninstall:
     -systemctl --user daemon-reload
     rm -f {{bindir}}/{{multicall}} {{bindir}}/cosmic-macos-setup
     for applet in {{applets}}; do rm -f {{bindir}}/$applet; done
-    rm -f {{appdir}}/{{menu_id}}.desktop {{appdir}}/{{active_id}}.desktop {{appdir}}/{{cc_id}}.desktop
+    rm -f {{appdir}}/{{menu_id}}.desktop {{appdir}}/{{active_id}}.desktop {{appdir}}/{{cc_id}}.desktop {{appdir}}/{{settings_id}}.desktop
     rm -f {{icondir}}/{{menu_id}}-symbolic.svg {{icondir}}/{{cc_id}}-symbolic.svg

@@ -26,6 +26,30 @@ const SCHEMA: &str = "org.gnome.desktop.wm.preferences";
 const KEY: &str = "button-layout";
 const TK_COMPONENT: &str = "com.system76.CosmicTk";
 pub const UNIT: &str = "cosmic-macos-window-controls.service";
+const SETUP_BINARY: &str = "cosmic-macos-setup";
+
+/// Where the watcher runs from: this executable when it is the CLI, else the
+/// CLI installed next to it (the settings app lives in the applets binary),
+/// else the first match on `PATH`.
+#[must_use]
+pub fn find_setup_binary(
+    current_exe: &Path,
+    path_var: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    if current_exe.file_name().is_some_and(|n| n == SETUP_BINARY) {
+        return Some(current_exe.to_owned());
+    }
+    let sibling = current_exe.parent().map(|dir| dir.join(SETUP_BINARY));
+    sibling
+        .into_iter()
+        .chain(
+            path_var
+                .into_iter()
+                .flat_map(std::env::split_paths)
+                .map(|dir| dir.join(SETUP_BINARY)),
+        )
+        .find(|candidate| candidate.is_file())
+}
 
 /// macOS order on the left: close, minimize, zoom. Buttons the user turned
 /// off in COSMIC Settings stay off.
@@ -162,7 +186,9 @@ pub fn enabled() -> bool {
 pub fn set_enabled(enable: bool) -> Result<()> {
     let path = unit_path()?;
     if enable {
-        let binary = std::env::current_exe().context("locate cosmic-macos-setup")?;
+        let current = std::env::current_exe().context("locate the running executable")?;
+        let binary = find_setup_binary(&current, std::env::var_os("PATH").as_deref())
+            .context("cosmic-macos-setup is not installed; run `just install`")?;
         fs::create_dir_all(path.parent().context("unit dir")?)?;
         fs::write(&path, unit_contents(&binary))
             .with_context(|| format!("write {}", path.display()))?;
@@ -209,6 +235,26 @@ mod tests {
             ":maximize,close"
         );
         assert_eq!(parse_gsettings_string("close:"), "close:");
+    }
+
+    #[test]
+    fn finds_the_cli_from_any_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let cli = bin.join(SETUP_BINARY);
+
+        // The CLI itself needs no lookup.
+        assert_eq!(find_setup_binary(&cli, None), Some(cli.clone()));
+        // The applets binary finds the CLI installed next to it…
+        let applets = bin.join("cosmic-macos-applets");
+        assert_eq!(find_setup_binary(&applets, None), None);
+        fs::write(&cli, b"").unwrap();
+        assert_eq!(find_setup_binary(&applets, None), Some(cli.clone()));
+        // …or on PATH when run from elsewhere, e.g. `cargo run`.
+        let elsewhere = tmp.path().join("target/debug/cosmic-macos-applets");
+        let path = std::env::join_paths([tmp.path().join("nope"), bin]).unwrap();
+        assert_eq!(find_setup_binary(&elsewhere, Some(&path)), Some(cli));
     }
 
     #[test]

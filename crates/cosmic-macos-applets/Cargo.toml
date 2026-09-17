@@ -12,5 +12,6 @@ macos-common.workspace = true
 macos-applet-menu.workspace = true
 macos-applet-active-app.workspace = true
 macos-applet-control-center.workspace = true
+macos-settings.workspace = true
 libcosmic.workspace = true
 tracing.workspace = true

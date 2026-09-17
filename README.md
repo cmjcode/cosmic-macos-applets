@@ -38,7 +38,8 @@ networks, paired devices, or audio outputs.
 | Active application | applet `io.github.jayuda.CosmicMacosActiveApp` | Follows focus through the Wayland toplevel protocols, event driven with no polling. Resolves names from `.desktop` files, off the UI thread. |
 | Control Center | applet `io.github.jayuda.CosmicMacosControlCenter` | Wi-Fi via NetworkManager, Bluetooth via BlueZ, volume and output via cosmic-settings-daemon, brightness, Now Playing via MPRIS, Do Not Disturb, dark mode, screenshot, lock, battery. Every service reconnects on its own. |
 | `cosmic-macos-setup` | CLI | Backs up and then rewrites the panel config. The panel reloads live. `restore` undoes it. |
-| Window controls on the left | opt-in, `--window-controls-left` | Close, minimize and maximize on the left in GTK and Chromium apps. See below. |
+| Top Bar Settings | app `io.github.jayuda.CosmicMacosSettings` | Everything below without a terminal. Opens from the system menu or the app launcher. |
+| Window controls on the left | opt-in, `--window-controls-left` | Close, minimize and maximize on the left in GTK apps, Firefox, Chromium and Telegram. See below. |
 | Three-finger drag | opt-in, `--three-finger-drag` | Switches on [linux-3-finger-drag](https://github.com/lmr97/linux-3-finger-drag), installed separately. See below. |
 
 The tray, input source, battery and clock stay COSMIC's own applets. The
@@ -104,10 +105,13 @@ time. It sleeps between changes and uses no CPU.
 
 | Moves to the left | Stays on the right |
 |---|---|
-| GTK 3/4 and libadwaita apps (Files from GNOME, Firefox, …) | COSMIC apps (Files, Terminal, Settings): libcosmic always draws them on the right |
-| Chromium, Electron and VS Code when they use the GTK title bar | Windows with COSMIC's server-side title bar (most Qt apps) |
+| GTK 3/4 and libadwaita apps, such as GNOME Files (Nautilus) and Firefox | COSMIC apps (COSMIC Files, Terminal, Settings): libcosmic always draws them on the right |
+| Chromium-based browsers using the GTK theme | Windows with COSMIC's server-side title bar, such as most Qt apps and VS Code with `"window.titleBarStyle": "native"` |
+| Telegram Desktop, which draws its own title bar | VS Code and its forks with a custom title bar: they draw their own controls, always on the right |
 
-Both "stays on the right" cases need changes in COSMIC itself; see
+The difference is who draws the buttons. Only apps that draw them
+themselves *and* read GNOME's `button-layout` follow this setting.
+The COSMIC cases need changes in COSMIC itself; see
 [pop-os/cosmic-epoch#640](https://github.com/pop-os/cosmic-epoch/issues/640).
 Running apps pick the change up live; a few need a restart.
 
@@ -657,9 +661,31 @@ the window-controls and three-finger-drag services were on, and `restore`
 switches them back to that state. `just uninstall` removes the window-controls
 service; linux-3-finger-drag is uninstalled from its own repository.
 
+## Top Bar Settings
+
+Open *Top Bar Settings…* from the system menu, or search for it in the app
+launcher. It is laid out like COSMIC Settings, with search in the header.
+
+| Page | What it changes |
+|---|---|
+| Top Bar | Apply the profile, panel opacity, weekday, notifications applet, undo the last change, restore the original panel |
+| System Menu | Menu entries, power confirmation, panel icon |
+| Active App | Bold label, longest name, empty label, per-monitor focus, global menu |
+| Control Center | Show, hide and reorder blocks, Now Playing, volume limit |
+| Windows & Touchpad | Window controls on the left, three-finger drag with setup help when it is not installed |
+
+Applet settings take effect immediately. Actions that change the panel layout
+or switch a session service use the same code as `cosmic-macos-setup`, so they
+take a backup first and appear in *Undo the last change*. Opacity and weekday
+changes are written live without a backup, as COSMIC Settings does.
+
+The system menu only shows the new entry after the panel reloads the applet,
+for example after logging in again.
+
 ## Configuration
 
-Both applets hot-reload their settings from `~/.config/cosmic/<applet id>/v1/`.
+The applets hot-reload their settings from `~/.config/cosmic/<applet id>/v1/`.
+Top Bar Settings edits the same keys.
 
 | Applet | Key | Default | Meaning |
 |---|---|---|---|
@@ -698,7 +724,8 @@ just check    # rustfmt, clippy -D warnings, tests
 | `macos-applet-active-app` | Focused-application applet and its Wayland thread |
 | `macos-applet-control-center` | Control Center applet; one service module per backend |
 | `cosmic-macos-applets` | Multi-call binary, so libcosmic ships once |
-| `macos-setup` | `cosmic-macos-setup` CLI |
+| `macos-setup` | Profile, backups and session services: a library plus the `cosmic-macos-setup` CLI |
+| `macos-settings` | Top Bar Settings window, run through the multi-call binary as `cosmic-macos-settings` |
 
 The global menu has an end-to-end test that starts a private `dbus-daemon`,
 registers a fake exporter, and checks matching, layout loading, click
