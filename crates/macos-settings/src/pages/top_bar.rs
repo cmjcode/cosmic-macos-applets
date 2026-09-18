@@ -136,8 +136,6 @@ impl Page {
                 if let Some(s) = self.snapshot.as_mut() {
                     let opacity = f32::from(percent) / 100.0;
                     s.options.opacity = opacity;
-                    write(panel_profile::PANEL_COMPONENT, "opacity", opacity);
-                    let _ = macos_setup::theme::apply_system_theme(s.options.theme_preset, opacity);
                 }
             }
             Message::OpacityReleased => {

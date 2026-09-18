@@ -109,24 +109,72 @@ button:hover, .button:hover {{\n\
 
 fn update_cosmic_theme_container_opacities(home: &Path, preset: ThemePreset, opacity: f32) -> Result<()> {
     let cosmic_dir = home.join(".config").join("cosmic");
-    for theme_name in ["com.system76.CosmicTheme.Dark", "com.system76.CosmicTheme.Light"] {
-        let v1_dir = cosmic_dir.join(theme_name).join("v1");
-        if !v1_dir.exists() {
+    let is_frosted = matches!(preset, ThemePreset::LiquidGlass);
+    let target_alpha = match preset {
+        ThemePreset::LiquidGlass => opacity.clamp(0.05, 1.0),
+        ThemePreset::Classic => 1.0,
+    };
+    let alpha_byte = (target_alpha * 255.0).round().clamp(5.0, 255.0) as u8;
+    let alpha_hex = format!("{:02X}", alpha_byte);
+
+    let theme_names = [
+        "com.system76.CosmicTheme.Dark",
+        "com.system76.CosmicTheme.Light",
+        "com.system76.CosmicTheme.Dark.Builder",
+        "com.system76.CosmicTheme.Light.Builder",
+    ];
+
+    for theme_name in theme_names {
+        let theme_dir = cosmic_dir.join(theme_name);
+        if !theme_dir.exists() {
             continue;
         }
-        for file_name in ["background", "primary"] {
-            let file_path = v1_dir.join(file_name);
-            if !file_path.exists() {
-                continue;
+
+        // --- Update v1 ---
+        let v1_dir = theme_dir.join("v1");
+        if v1_dir.exists() {
+            for file_name in ["background", "primary", "secondary"] {
+                let file_path = v1_dir.join(file_name);
+                if let Ok(content) = fs::read_to_string(&file_path) {
+                    let new_content = update_ron_alpha(&content, target_alpha);
+                    if new_content != content {
+                        let _ = fs::write(&file_path, new_content);
+                    }
+                }
             }
-            if let Ok(content) = fs::read_to_string(&file_path) {
-                let target_alpha = match preset {
-                    ThemePreset::LiquidGlass => opacity.clamp(0.15, 0.95),
-                    ThemePreset::Classic => 1.0,
-                };
-                let new_content = update_ron_alpha(&content, target_alpha);
-                if new_content != content {
-                    let _ = fs::write(&file_path, new_content);
+        }
+
+        // --- Update v2 ---
+        let v2_dir = theme_dir.join("v2");
+        if v2_dir.exists() {
+            let frosted_val = if is_frosted { "true" } else { "false" };
+            for file_name in [
+                "frosted_windows",
+                "frosted_panel",
+                "frosted_applets",
+                "frosted_system_interface",
+            ] {
+                let file_path = v2_dir.join(file_name);
+                let _ = fs::write(&file_path, frosted_val);
+            }
+
+            let frosted_level = if is_frosted { "Medium" } else { "None" };
+            let _ = fs::write(v2_dir.join("frosted"), frosted_level);
+
+            for file_name in [
+                "background",
+                "transparent_background",
+                "primary",
+                "transparent_primary",
+                "secondary",
+                "transparent_secondary",
+            ] {
+                let file_path = v2_dir.join(file_name);
+                if let Ok(content) = fs::read_to_string(&file_path) {
+                    let new_content = update_v2_hex_alpha(&content, &alpha_hex);
+                    if new_content != content {
+                        let _ = fs::write(&file_path, new_content);
+                    }
                 }
             }
         }
@@ -157,6 +205,34 @@ fn update_ron_alpha(content: &str, alpha: f32) -> String {
     } else {
         result.trim_end().to_string()
     }
+}
+
+fn update_v2_hex_alpha(content: &str, alpha_hex: &str) -> String {
+    let mut result = String::with_capacity(content.len());
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if (trimmed.starts_with("base:") || trimmed.starts_with("base :"))
+            && let Some(hash_idx) = line.find('#')
+            && line.len() >= hash_idx + 9
+        {
+            let hex_part = &line[hash_idx..hash_idx + 9];
+            if hex_part.starts_with('#') && hex_part.chars().skip(1).all(|c| c.is_ascii_hexdigit()) {
+                let mut new_line = String::new();
+                new_line.push_str(&line[..hash_idx + 7]);
+                new_line.push_str(alpha_hex);
+                new_line.push_str(&line[hash_idx + 9..]);
+                result.push_str(&new_line);
+                result.push('\n');
+                continue;
+            }
+        }
+        result.push_str(line);
+        result.push('\n');
+    }
+    if !content.ends_with('\n') && result.ends_with('\n') {
+        result.pop();
+    }
+    result
 }
 
 #[cfg(test)]
@@ -196,5 +272,20 @@ mod tests {
         let updated = update_ron_alpha(sample_ron, 0.55);
         assert!(updated.contains("alpha: 0.5500,"));
     }
+
+    #[test]
+    fn v2_hex_alpha_update_works() {
+        let sample = r##"(
+    base: "#1B1B1BFF",
+    component: (
+        base: "#2E2E2EFF",
+    ),
+)"##;
+        let updated = update_v2_hex_alpha(sample, "8C");
+        println!("UPDATED CONTENT:\n{updated}");
+        assert!(updated.contains("base: \"#1B1B1B8C\","));
+        assert!(updated.contains("base: \"#2E2E2E8C\","));
+    }
 }
+
 

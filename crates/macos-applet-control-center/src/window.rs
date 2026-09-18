@@ -80,6 +80,7 @@ pub struct ControlCenter {
     volume_preview: Option<u32>,
     opacity: f32,
     opacity_preview: Option<f32>,
+    pending_opacity: Option<f32>,
     media: Option<Box<NowPlaying>>,
     session_bus: Option<zbus::Connection>,
     brightness: Brightness,
@@ -214,6 +215,11 @@ fn caption_or_empty(label: Option<String>) -> Element<'static, Message> {
 impl ControlCenter {
     fn close_popup(&mut self) -> app::Task<Message> {
         self.leave_page();
+        if let Some(opacity) = self.pending_opacity.take() {
+            self.opacity = opacity;
+            write_config("com.system76.CosmicPanel.Panel", 1, "opacity", opacity);
+            let _ = macos_setup::theme::apply_system_theme(self.config.theme_preset, opacity);
+        }
         self.popup.take().map_or_else(Task::none, |id| {
             cosmic::surface::surface_task(cosmic::surface::action::destroy_popup(id))
         })
@@ -1080,13 +1086,18 @@ impl cosmic::Application for ControlCenter {
             Message::SetOpacity(percent) => {
                 let opacity = (percent as f32 / 100.0).clamp(0.05, 1.0);
                 self.opacity_preview = Some(opacity);
+                self.pending_opacity = Some(opacity);
             }
             Message::OpacityReleased => {
-                if let Some(opacity) = self.opacity_preview.take() {
-                    self.opacity = opacity;
-                    write_config("com.system76.CosmicPanel.Panel", 1, "opacity", opacity);
-                    let _ = macos_setup::theme::apply_system_theme(self.config.theme_preset, opacity);
-                }
+                let opacity = self
+                    .opacity_preview
+                    .take()
+                    .or_else(|| self.pending_opacity.take())
+                    .unwrap_or(self.opacity);
+                self.opacity = opacity;
+                self.pending_opacity = None;
+                write_config("com.system76.CosmicPanel.Panel", 1, "opacity", opacity);
+                let _ = macos_setup::theme::apply_system_theme(self.config.theme_preset, opacity);
             }
             Message::ToggleMute => send(self.audio_tx.as_ref(), audio::Request::ToggleMute),
             Message::SetSink(id) => send(self.audio_tx.as_ref(), audio::Request::SetDefault(id)),
