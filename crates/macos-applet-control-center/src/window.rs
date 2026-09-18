@@ -233,10 +233,17 @@ impl ControlCenter {
     }
 
     fn launch_settings(&self, page: &'static str) {
-        let exec = if page.is_empty() {
-            "cosmic-settings".to_owned()
+        let (prog, args_str) = if page.is_empty() {
+            ("cosmic-settings", String::new())
+        } else if page == "top_bar" || page == "top-bar" {
+            ("cosmic-macos-settings", String::new())
         } else {
-            format!("cosmic-settings {page}")
+            ("cosmic-settings", page.to_string())
+        };
+        let exec = if args_str.is_empty() {
+            prog.to_owned()
+        } else {
+            format!("{prog} {args_str}")
         };
         match &self.token_tx {
             Some(tx)
@@ -247,8 +254,12 @@ impl ControlCenter {
                     })
                     .is_ok() => {}
             _ => {
-                let args: Vec<&str> = exec.split_whitespace().skip(1).collect();
-                spawn("cosmic-settings", &args, None);
+                let args: Vec<&str> = if args_str.is_empty() {
+                    Vec::new()
+                } else {
+                    args_str.split_whitespace().collect()
+                };
+                spawn(prog, &args, None);
             }
         }
     }
@@ -530,7 +541,15 @@ impl ControlCenter {
 
         container(
             column![
-                text::body(fl!("opacity")).font(cosmic::font::semibold()),
+                row![
+                    text::body(fl!("opacity")).font(cosmic::font::semibold()),
+                    space::horizontal().width(Length::Fill),
+                    button::custom(sym("preferences-panel-symbolic", 16))
+                        .class(style::flat_preset(preset))
+                        .padding(4)
+                        .on_press(Message::OpenSettings("top_bar")),
+                ]
+                .align_y(Alignment::Center),
                 row![
                     sym("color-select-symbolic", 16),
                     slider(5..=100, percent, Message::SetOpacity)
