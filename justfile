@@ -37,8 +37,8 @@ check:
     cargo clippy --workspace --all-targets --locked -- -D warnings
     cargo test --workspace --locked
 
-# Install binaries, applet desktop entries and icons.
-install: build
+# Install binaries, applet desktop entries, icons, and the patched notification daemon.
+install: build install-notifications
     install -Dm0755 {{target}}/{{multicall}} {{bindir}}/{{multicall}}
     install -Dm0755 {{target}}/cosmic-macos-setup {{bindir}}/cosmic-macos-setup
     for applet in {{applets}}; do ln -sfn {{multicall}} {{bindir}}/$applet; done
@@ -52,8 +52,8 @@ install: build
     -gtk-update-icon-cache -qtf {{sharedir}}/icons/hicolor 2>/dev/null
     @echo "Installed to {{prefix}}. Next: just apply"
 
-# Install and switch the COSMIC panel to the macOS profile (backs up first).
-apply *args: install
+# Install all components, restart notification daemon, and switch panel to macOS profile.
+apply *args: install restart-notifications
     {{bindir}}/cosmic-macos-setup apply {{args}}
 
 # Restore the panel configuration saved by the last `apply`.
@@ -86,14 +86,14 @@ install-notifications: build-notifications
 
 # Stop the running daemon; cosmic-session starts the installed one and reloads the panel.
 restart-notifications:
-    kill $(pidof cosmic-notifications)
+    -kill $(pidof cosmic-notifications) 2>/dev/null || true
 
 # Remove the patched daemon. COSMIC's own is back after the next login or restart.
 uninstall-notifications:
     sudo rm -f {{notif_bin}}
 
 # Remove everything `install` created. Backups in ~/.local/state are kept.
-uninstall:
+uninstall: uninstall-notifications
     -systemctl --user disable --now cosmic-macos-window-controls.service 2>/dev/null
     rm -f {{env('XDG_CONFIG_HOME', env('HOME') / '.config')}}/systemd/user/cosmic-macos-window-controls.service
     -systemctl --user daemon-reload

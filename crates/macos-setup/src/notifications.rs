@@ -299,4 +299,57 @@ mod tests {
             PathBuf::from("/usr/bin/x")
         );
     }
+
+    #[test]
+    fn position_default_is_top_right() {
+        assert_eq!(Position::DEFAULT, Position::TopRight);
+        assert_eq!(Position::DEFAULT.name(), "top-right");
+        assert!(Position::CHOICES.contains(&Position::TopRight));
+    }
+
+    #[test]
+    fn position_all_variants_ron_serialization() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = Config::with_custom_path(COMPONENT, 1, tmp.path().to_owned()).unwrap();
+
+        let expected_ron_map = [
+            (Position::Top, "Top"),
+            (Position::Bottom, "Bottom"),
+            (Position::Left, "Left"),
+            (Position::Right, "Right"),
+            (Position::TopLeft, "TopLeft"),
+            (Position::TopRight, "TopRight"),
+            (Position::BottomLeft, "BottomLeft"),
+            (Position::BottomRight, "BottomRight"),
+        ];
+
+        for (position, expected_ron) in expected_ron_map {
+            let req = Options {
+                notification_position: Some(position),
+                ..Options::default()
+            };
+            let plan = changes(&config, &req);
+            if let Some(change) = plan.first() {
+                change.apply().unwrap();
+            }
+            assert_eq!(current(&config), Some(position));
+
+            let raw = fs::read_to_string(
+                tmp.path()
+                    .join("cosmic")
+                    .join(COMPONENT)
+                    .join("v1")
+                    .join(KEY),
+            )
+            .unwrap();
+
+            assert_eq!(
+                raw.trim(),
+                expected_ron,
+                "Position {:?} RON must match cosmic-notifications-config Anchor RON variant",
+                position
+            );
+        }
+    }
 }
+

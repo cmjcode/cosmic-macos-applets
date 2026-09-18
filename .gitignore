@@ -2,3 +2,4 @@
 *.cosmic-macos-tmp
 */target
 /**/target
+.agents/

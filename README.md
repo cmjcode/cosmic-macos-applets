@@ -61,9 +61,7 @@ that makes it honor that key whenever the applet is absent. With the applet
 in a panel nothing changes.
 
 ```sh
-just install-notifications                        # builds COSMIC 1.8's daemon with the patch, installs to /usr/local/bin (sudo)
-just restart-notifications                        # or log in again; cosmic-session restarts the daemon and the panel
-cosmic-macos-setup apply --notifications top-right
+just apply                                        # builds, installs applets & patched daemon (sudo), restarts daemon, and applies profile
 ```
 
 Positions: `top-left`, `top`, `top-right`, `bottom-left`, `bottom`,
@@ -78,6 +76,8 @@ starts the patched daemon and package updates never overwrite it. Run
 and the daemon share a private socket protocol. `just uninstall-notifications`
 returns to the packaged daemon at the next login. `cosmic-macos-setup status`
 shows the stored position and which daemon is running.
+
+> **Note**: If notification popups continue appearing at top-center despite changing the setting to `top-right`, verify that the patched daemon is running by checking `cosmic-macos-setup status` and ensure you ran `just install-notifications` followed by `just restart-notifications` (or log in again).
 
 ## Global menu (experimental)
 
