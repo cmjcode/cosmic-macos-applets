@@ -152,6 +152,23 @@ fn write_config<T: serde::Serialize>(id: &str, version: u64, key: &str, value: T
     }
 }
 
+fn sibling_program(program: &str) -> String {
+    let exe = std::env::current_exe().ok();
+    if let Some(parent) = exe.as_deref().and_then(std::path::Path::parent) {
+        let p = parent.join(program);
+        if p.exists() && !p.to_string_lossy().contains(char::is_whitespace) {
+            return p.to_string_lossy().into_owned();
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        let p = home.join(".local/bin").join(program);
+        if p.exists() && !p.to_string_lossy().contains(char::is_whitespace) {
+            return p.to_string_lossy().into_owned();
+        }
+    }
+    program.to_owned()
+}
+
 fn spawn(program: &str, args: &[&str], token: Option<&str>) {
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
@@ -234,14 +251,14 @@ impl ControlCenter {
 
     fn launch_settings(&self, page: &'static str) {
         let (prog, args_str) = if page.is_empty() {
-            ("cosmic-settings", String::new())
+            (sibling_program("cosmic-settings"), String::new())
         } else if page == "top_bar" || page == "top-bar" {
-            ("cosmic-macos-settings", String::new())
+            (sibling_program("cosmic-macos-settings"), String::new())
         } else {
-            ("cosmic-settings", page.to_string())
+            (sibling_program("cosmic-settings"), page.to_string())
         };
         let exec = if args_str.is_empty() {
-            prog.to_owned()
+            prog.clone()
         } else {
             format!("{prog} {args_str}")
         };
@@ -259,7 +276,7 @@ impl ControlCenter {
                 } else {
                     args_str.split_whitespace().collect()
                 };
-                spawn(prog, &args, None);
+                spawn(&prog, &args, None);
             }
         }
     }
@@ -600,7 +617,7 @@ impl ControlCenter {
         };
         row![
             square("system-lock-screen-symbolic", Message::Lock),
-            square("video-display-symbolic", Message::OpenSettings("displays")),
+            square("video-display-symbolic", Message::OpenSettings("top_bar")),
             square("emblem-system-symbolic", Message::OpenSettings("")),
             battery,
         ]
