@@ -8,6 +8,7 @@ pub mod backup;
 pub mod notifications;
 pub mod panel_profile;
 pub mod profile;
+pub mod theme;
 pub mod three_finger_drag;
 pub mod user_service;
 pub mod window_controls;

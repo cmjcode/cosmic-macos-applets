@@ -32,6 +32,9 @@ result-restored = { $count ->
    *[other] Restored { $count } settings.
 }
 appearance = Appearance
+theme-preset = Theme Preset
+theme-classic = Classic macOS
+theme-liquid-glass = Liquid Glass (System-Wide)
 opacity = Panel opacity
 show-weekday = Show the weekday in the clock
 keep-notifications = Keep the notifications applet

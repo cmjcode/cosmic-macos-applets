@@ -4,6 +4,7 @@ focus = Fokus
 do-not-disturb = Jangan Ganggu
 display = Layar
 sound = Suara
+opacity = Opacity
 sound-output = Output Suara
 on = Nyala
 off = Mati

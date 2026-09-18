@@ -7,6 +7,7 @@ use cosmic::{
     theme,
     widget::{button, container},
 };
+use macos_common::config::ThemePreset;
 
 const TILE_RADIUS: f32 = 16.0;
 
@@ -15,23 +16,44 @@ fn with_alpha(mut color: Color, alpha: f32) -> Color {
     color
 }
 
-/// Rounded translucent card behind a group of controls.
-pub fn tile() -> theme::Container<'static> {
-    theme::Container::custom(|theme| {
+/// Rounded card behind a group of controls, styled by `preset`.
+pub fn tile_preset(preset: ThemePreset) -> theme::Container<'static> {
+    theme::Container::custom(move |theme| {
         let cosmic = theme.cosmic();
+        let base_bg: Color = cosmic.primary(false).component.base.into();
+        let (bg, border_color) = match preset {
+            ThemePreset::LiquidGlass => (
+                Background::Color(with_alpha(base_bg, 0.45)),
+                Color {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 0.22,
+                },
+            ),
+            ThemePreset::Classic => (
+                Background::Color(base_bg),
+                with_alpha(cosmic.primary(false).component.divider.into(), 0.5),
+            ),
+        };
+
         container::Style {
-            background: Some(Background::Color(
-                cosmic.primary(false).component.base.into(),
-            )),
+            background: Some(bg),
             text_color: Some(cosmic.primary(false).component.on.into()),
             border: Border {
                 radius: TILE_RADIUS.into(),
                 width: 1.0,
-                color: with_alpha(cosmic.primary(false).component.divider.into(), 0.5),
+                color: border_color,
             },
             ..Default::default()
         }
     })
+}
+
+/// Rounded card behind a group of controls (Classic preset).
+#[allow(dead_code)]
+pub fn tile() -> theme::Container<'static> {
+    tile_preset(ThemePreset::Classic)
 }
 
 fn button_style(background: Color, foreground: Color, radius: f32) -> button::Style {
@@ -43,13 +65,20 @@ fn button_style(background: Color, foreground: Color, radius: f32) -> button::St
     style
 }
 
-/// Circular toggle: vivid accent when `on` (like macOS' blue), neutral otherwise.
-pub fn round_toggle(on: bool) -> theme::Button {
+/// Circular toggle styled by `preset`.
+pub fn round_toggle_preset(on: bool, preset: ThemePreset) -> theme::Button {
     let paint = move |theme: &cosmic::Theme, state: u8| {
         let cosmic = theme.cosmic();
         if on {
-            let accent: Color = cosmic.accent_color().into();
-            // Hover/press darken slightly instead of switching palette entries.
+            let accent: Color = match preset {
+                ThemePreset::LiquidGlass => Color {
+                    r: 0.0,
+                    g: 0.48,
+                    b: 1.0,
+                    a: 0.95,
+                },
+                ThemePreset::Classic => cosmic.accent_color().into(),
+            };
             let shade = match state {
                 1 => 0.9,
                 2 => 0.8,
@@ -59,7 +88,7 @@ pub fn round_toggle(on: bool) -> theme::Button {
                 r: accent.r * shade,
                 g: accent.g * shade,
                 b: accent.b * shade,
-                a: 1.0,
+                a: accent.a,
             };
             button_style(bg, cosmic.on_accent_color().into(), 999.0)
         } else {
@@ -70,7 +99,11 @@ pub fn round_toggle(on: bool) -> theme::Button {
                 _ => component.base,
             }
             .into();
-            button_style(with_alpha(bg, bg.a.max(0.35)), component.on.into(), 999.0)
+            let alpha = match preset {
+                ThemePreset::LiquidGlass => 0.20,
+                ThemePreset::Classic => bg.a.max(0.35),
+            };
+            button_style(with_alpha(bg, alpha), component.on.into(), 999.0)
         }
     };
     theme::Button::Custom {
@@ -86,12 +119,27 @@ pub fn round_toggle(on: bool) -> theme::Button {
     }
 }
 
-/// Filled accent circle for a selected list row.
-pub fn selected_circle() -> theme::Container<'static> {
-    theme::Container::custom(|theme| {
+/// Circular toggle (Classic preset).
+#[allow(dead_code)]
+pub fn round_toggle(on: bool) -> theme::Button {
+    round_toggle_preset(on, ThemePreset::Classic)
+}
+
+/// Filled accent circle for a selected list row, styled by `preset`.
+pub fn selected_circle_preset(preset: ThemePreset) -> theme::Container<'static> {
+    theme::Container::custom(move |theme| {
         let cosmic = theme.cosmic();
+        let bg_color = match preset {
+            ThemePreset::LiquidGlass => Color {
+                r: 0.0,
+                g: 0.48,
+                b: 1.0,
+                a: 1.0,
+            },
+            ThemePreset::Classic => cosmic.accent_color().into(),
+        };
         container::Style {
-            background: Some(Background::Color(cosmic.accent_color().into())),
+            background: Some(Background::Color(bg_color)),
             icon_color: Some(cosmic.on_accent_color().into()),
             border: Border {
                 radius: 999.0.into(),
@@ -102,12 +150,22 @@ pub fn selected_circle() -> theme::Container<'static> {
     })
 }
 
-/// Invisible button inside a tile (label areas that open a detail page).
-pub fn flat() -> theme::Button {
-    let paint = |theme: &cosmic::Theme, alpha: f32| {
+/// Filled accent circle (Classic preset).
+#[allow(dead_code)]
+pub fn selected_circle() -> theme::Container<'static> {
+    selected_circle_preset(ThemePreset::Classic)
+}
+
+/// Invisible button inside a tile, styled by `preset`.
+pub fn flat_preset(preset: ThemePreset) -> theme::Button {
+    let paint = move |theme: &cosmic::Theme, alpha: f32| {
         let cosmic = theme.cosmic();
+        let hover_alpha = match preset {
+            ThemePreset::LiquidGlass => alpha.max(0.25),
+            ThemePreset::Classic => alpha,
+        };
         button_style(
-            with_alpha(cosmic.primary(false).component.hover.into(), alpha),
+            with_alpha(cosmic.primary(false).component.hover.into(), hover_alpha),
             cosmic.primary(false).component.on.into(),
             12.0,
         )
@@ -118,4 +176,10 @@ pub fn flat() -> theme::Button {
         hovered: Box::new(move |_, t| paint(t, 0.6)),
         pressed: Box::new(move |_, t| paint(t, 1.0)),
     }
+}
+
+/// Invisible button inside a tile (Classic preset).
+#[allow(dead_code)]
+pub fn flat() -> theme::Button {
+    flat_preset(ThemePreset::Classic)
 }

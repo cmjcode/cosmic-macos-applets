@@ -1,26 +1,21 @@
-// SPDX-License-Identifier: GPL-3.0-only
-//! `cosmic-macos-setup`: apply or restore the macOS-style COSMIC top bar.
-
 use anyhow::{Context, Result, bail};
+use macos_common::config::ThemePreset;
 use macos_setup::{
     Change, Options, Position, RestoreTarget, Restored, Service, backup,
     notifications::{self, Support},
     panel_profile,
     profile::{self, on_off},
-    window_controls,
+    theme, window_controls,
 };
 use std::{path::PathBuf, process::ExitCode};
 
 const USAGE: &str = "\
 cosmic-macos-setup — macOS-style top bar for COSMIC
+cosmic-macos-setup: apply, inspect and restore the macOS-style top bar.
 
 USAGE:
-    cosmic-macos-setup apply [--dry-run] [--force] [--opacity <0.0-1.0>] [--no-weekday] [--keep-notifications]
-                             [--notifications <position>]
-                             [--global-menu | --no-global-menu]
-                             [--window-controls-left | --window-controls-right]
-                             [--three-finger-drag | --no-three-finger-drag]
-    cosmic-macos-setup restore [--first | <backup-dir>]
+    cosmic-macos-setup apply [OPTIONS]
+    cosmic-macos-setup restore [--first] [BACKUP_DIR]
     cosmic-macos-setup backups
     cosmic-macos-setup status
 
@@ -38,6 +33,7 @@ COMMANDS:
 OPTIONS:
     --dry-run      Print the changes without writing anything.
     --force        Apply even if the macOS applets are not installed yet.
+    --theme PRESET Theme preset: classic or liquid-glass (system-wide GTK/COSMIC theme).
     --opacity N    Panel opacity (default 0.8).
     --no-weekday   Do not show the weekday in the clock.
     --keep-notifications
@@ -79,6 +75,7 @@ enum Command {
         dry_run: bool,
         force: bool,
         options: Options,
+        theme_specified: bool,
     },
     Restore(RestoreTarget),
     Backups,
@@ -96,10 +93,20 @@ fn parse(args: &[String]) -> Result<Command> {
     match command {
         "apply" => {
             let (mut dry_run, mut force, mut options) = (false, false, Options::default());
+            let mut theme_specified = false;
             while let Some(arg) = it.next() {
                 match arg {
                     "--dry-run" | "-n" => dry_run = true,
                     "--force" => force = true,
+                    "--theme" => {
+                        let value = it.next().context("--theme needs a preset (classic or liquid-glass)")?;
+                        match value {
+                            "classic" => options.theme_preset = ThemePreset::Classic,
+                            "liquid-glass" | "liquidglass" | "glass" => options.theme_preset = ThemePreset::LiquidGlass,
+                            other => bail!("unknown theme preset: {other} (use classic or liquid-glass)"),
+                        }
+                        theme_specified = true;
+                    }
                     "--no-weekday" => options.clock_weekday = false,
                     "--keep-notifications" => options.keep_notifications = true,
                     "--notifications" => {
@@ -130,6 +137,7 @@ fn parse(args: &[String]) -> Result<Command> {
                 dry_run,
                 force,
                 options,
+                theme_specified,
             })
         }
         "restore" => {
@@ -159,32 +167,42 @@ fn print_changes(changes: &[Change]) {
     }
 }
 
-fn apply(dry_run: bool, force: bool, options: &Options) -> Result<()> {
-    let plan = profile::plan(options, force)?;
-    if plan.is_empty() {
-        println!("The macOS profile is already applied. Nothing to do.");
-        return Ok(());
+fn apply(dry_run: bool, force: bool, options: &Options, theme_specified: bool) -> Result<()> {
+    let mut options = options.clone();
+    if !theme_specified {
+        options.theme_preset = profile::current_options().theme_preset;
     }
-    println!("{} setting(s) will change:", plan.len());
-    print_changes(&plan.changes);
-    for (service, want) in &plan.services {
-        println!(
-            "  service {}\n      {} -> {}",
-            service.name(),
-            on_off(!want),
-            on_off(*want)
-        );
-    }
+    let plan = profile::plan(&options, force)?;
     if dry_run {
+        println!("Dry run: checking macOS top bar profile...");
+        if !plan.is_empty() {
+            print_changes(&plan.changes);
+        }
         println!("\nDry run: nothing was written.");
         return Ok(());
     }
-    if let Some(backup_dir) = profile::execute(&plan)? {
-        println!("\nBackup saved to {}", backup_dir.display());
+
+    // Always apply system theme (GTK CSS, panel opacity & applet theme config)
+    theme::apply_system_theme(options.theme_preset, options.opacity)?;
+
+    if plan.is_empty() {
+        println!("Applied {:?} theme. The macOS panel layout is up to date.", options.theme_preset);
+    } else {
+        println!("Applying macOS top bar profile...");
+        print_changes(&plan.changes);
+        for (service, want) in &plan.services {
+            println!(
+                "  service {}\n      {} -> {}",
+                service.name(),
+                on_off(!want),
+                on_off(*want)
+            );
+        }
+        if let Some(backup_dir) = profile::execute(&plan)? {
+            println!("\nBackup saved to {}", backup_dir.display());
+        }
     }
-    println!(
-        "Applied. Undo with `cosmic-macos-setup restore` (or `restore --first` for the original panel)"
-    );
+    println!("Applied system-wide theme and macOS profile.");
     Ok(())
 }
 
@@ -208,7 +226,8 @@ fn run(command: Command) -> Result<()> {
             dry_run,
             force,
             options,
-        } => apply(dry_run, force, &options)?,
+            theme_specified,
+        } => apply(dry_run, force, &options, theme_specified)?,
         Command::Restore(dir) => restore(dir)?,
         Command::WindowControlsWatch => window_controls::watch()?,
         Command::Backups => {
@@ -293,6 +312,7 @@ mod tests {
                 dry_run: true,
                 force: false,
                 options: Options {
+                    theme_preset: ThemePreset::Classic,
                     opacity: 0.5,
                     clock_weekday: false,
                     keep_notifications: true,
@@ -301,8 +321,20 @@ mod tests {
                     window_controls_left: None,
                     three_finger_drag: None,
                 },
+                theme_specified: false,
             }
         );
+    }
+
+    #[test]
+    fn theme_flag_parses_presets() {
+        let theme = |a: &str| match parse(&args(a)).unwrap() {
+            Command::Apply { options, .. } => options.theme_preset,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(theme("apply"), ThemePreset::Classic);
+        assert_eq!(theme("apply --theme liquid-glass"), ThemePreset::LiquidGlass);
+        assert_eq!(theme("apply --theme classic"), ThemePreset::Classic);
     }
 
     #[test]

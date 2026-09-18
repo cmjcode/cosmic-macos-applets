@@ -3350,6 +3350,7 @@ dependencies = [
  "libcosmic",
  "logind-zbus",
  "macos-common",
+ "macos-setup",
  "mpris2-zbus",
  "nmrs",
  "rust-embed",

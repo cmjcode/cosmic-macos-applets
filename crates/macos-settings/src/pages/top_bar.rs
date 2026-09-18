@@ -54,6 +54,7 @@ pub enum Outcome {
 #[derive(Debug, Clone)]
 pub enum Message {
     Loaded(Box<Snapshot>),
+    ThemePreset(usize),
     Opacity(u8),
     OpacityReleased,
     Weekday(bool),
@@ -117,16 +118,32 @@ impl Page {
             Message::Loaded(snapshot) => {
                 self.snapshot = Some(*snapshot);
             }
+            Message::ThemePreset(index) => {
+                let Some(preset) = macos_common::config::ThemePreset::CHOICES.get(index).copied() else {
+                    return Task::none();
+                };
+                if let Some(s) = self.snapshot.as_mut() {
+                    s.options.theme_preset = preset;
+                    let opacity = match preset {
+                        macos_common::config::ThemePreset::LiquidGlass => 0.55,
+                        macos_common::config::ThemePreset::Classic => 0.80,
+                    };
+                    s.options.opacity = opacity;
+                    let _ = macos_setup::theme::apply_system_theme(preset, opacity);
+                }
+            }
             Message::Opacity(percent) => {
                 if let Some(s) = self.snapshot.as_mut() {
-                    s.options.opacity = f32::from(percent) / 100.0;
+                    let opacity = f32::from(percent) / 100.0;
+                    s.options.opacity = opacity;
+                    write(panel_profile::PANEL_COMPONENT, "opacity", opacity);
+                    let _ = macos_setup::theme::apply_system_theme(s.options.theme_preset, opacity);
                 }
             }
             Message::OpacityReleased => {
-                // Live on the panel once the profile is in place; otherwise
-                // it is used by the next Apply.
-                if let Some(s) = self.snapshot.as_ref().filter(|s| s.applied) {
+                if let Some(s) = self.snapshot.as_ref() {
                     write(panel_profile::PANEL_COMPONENT, "opacity", s.options.opacity);
+                    let _ = macos_setup::theme::apply_system_theme(s.options.theme_preset, s.options.opacity);
                 }
             }
             Message::Weekday(show) => {
@@ -191,6 +208,7 @@ impl Page {
             SectionDef::new(
                 fl!("appearance"),
                 [
+                    fl!("theme-preset"),
                     fl!("opacity"),
                     fl!("show-weekday"),
                     fl!("keep-notifications"),
@@ -261,8 +279,23 @@ impl Page {
             .spacing(cosmic::theme::spacing().space_s)
             .align_y(Alignment::Center);
 
+        let theme_labels: Vec<String> = macos_common::config::ThemePreset::CHOICES
+            .iter()
+            .map(|p| match p {
+                macos_common::config::ThemePreset::Classic => fl!("theme-classic"),
+                macos_common::config::ThemePreset::LiquidGlass => fl!("theme-liquid-glass"),
+            })
+            .collect();
+        let selected_theme = macos_common::config::ThemePreset::CHOICES
+            .iter()
+            .position(|c| *c == s.options.theme_preset);
+
         settings::section()
             .title(fl!("appearance"))
+            .add(
+                settings::item::builder(fl!("theme-preset"))
+                    .control(widget::dropdown(theme_labels, selected_theme, Message::ThemePreset)),
+            )
             .add(settings::item(fl!("opacity"), opacity))
             .add(
                 settings::item::builder(fl!("show-weekday"))

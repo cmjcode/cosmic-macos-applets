@@ -4,6 +4,7 @@ focus = Focus
 do-not-disturb = Do Not Disturb
 display = Display
 sound = Sound
+opacity = Opacity
 sound-output = Sound Output
 on = On
 off = Off

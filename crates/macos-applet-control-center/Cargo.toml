@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 macos-common.workspace = true
+macos-setup.workspace = true
 bluer.workspace = true
 cosmic-config.workspace = true
 cosmic-notifications-config.workspace = true

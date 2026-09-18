@@ -7,6 +7,8 @@ use cosmic_panel_config::{AutoHide, CosmicPanelBackground, PanelAnchor, PanelSiz
 use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 
+use macos_common::config::ThemePreset;
+
 use crate::notifications::Position;
 
 pub const PANEL_COMPONENT: &str = "com.system76.CosmicPanel.Panel";
@@ -45,6 +47,8 @@ pub const OWN_APPLETS: &[&str] = &[
 /// User-tunable knobs of the profile.
 #[derive(Debug, Clone)]
 pub struct Options {
+    /// Theme preset used across OS and applets.
+    pub theme_preset: ThemePreset,
     /// Panel opacity, 0.0 – 1.0. macOS menu bars are translucent.
     pub opacity: f32,
     /// Show the weekday in the clock ("Wed 16 Sep 10:30").
@@ -67,6 +71,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            theme_preset: ThemePreset::Classic,
             opacity: 0.8,
             clock_weekday: true,
             keep_notifications: false,
@@ -81,7 +86,8 @@ impl Default for Options {
 /// Float-tolerant comparison, so parsed options can be compared in tests.
 impl PartialEq for Options {
     fn eq(&self, other: &Self) -> bool {
-        (self.opacity - other.opacity).abs() < f32::EPSILON
+        self.theme_preset == other.theme_preset
+            && (self.opacity - other.opacity).abs() < f32::EPSILON
             && self.clock_weekday == other.clock_weekday
             && self.keep_notifications == other.keep_notifications
             && self.notification_position == other.notification_position
@@ -159,6 +165,16 @@ pub fn applet_installed(id: &str) -> bool {
 pub fn panel_changes(panel: &Config, options: &Options, right: Vec<String>) -> Vec<Change> {
     let c = PANEL_COMPONENT;
     let left: Vec<String> = LEFT.iter().map(|s| (*s).to_owned()).collect();
+    let opacity = match options.theme_preset {
+        ThemePreset::LiquidGlass => {
+            if (options.opacity - 0.8).abs() < f32::EPSILON {
+                0.55
+            } else {
+                options.opacity
+            }
+        }
+        ThemePreset::Classic => options.opacity,
+    };
     [
         diff(panel, c, "anchor", PanelAnchor::Top),
         diff(panel, c, "anchor_gap", false),
@@ -176,7 +192,7 @@ pub fn panel_changes(panel: &Config, options: &Options, right: Vec<String>) -> V
         ),
         diff(panel, c, "size_center", None::<PanelSize>),
         diff(panel, c, "background", CosmicPanelBackground::ThemeDefault),
-        diff(panel, c, "opacity", options.opacity.clamp(0.0, 1.0)),
+        diff(panel, c, "opacity", opacity.clamp(0.0, 1.0)),
         diff(panel, c, "exclusive_zone", true),
         diff(panel, c, "autohide", AutoHide::Never),
         diff(panel, c, "keep_style_on_maximize", true),

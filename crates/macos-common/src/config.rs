@@ -83,11 +83,27 @@ pub enum Section {
     Shortcuts,
 }
 
+/// OS and applet visual theme preset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ThemePreset {
+    /// Classic macOS look using default COSMIC theme colors.
+    #[default]
+    Classic,
+    /// Liquid Glass aesthetic with glassmorphism translucency, glowing liquid accent, and frosted glass borders.
+    LiquidGlass,
+}
+
+impl ThemePreset {
+    pub const CHOICES: [Self; 2] = [Self::Classic, Self::LiquidGlass];
+}
+
 /// Configuration of the Control Center applet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, CosmicConfigEntry)]
 #[version = 1]
 #[serde(default)]
 pub struct ControlCenterConfig {
+    /// Theme preset used by applets and OS setup.
+    pub theme_preset: ThemePreset,
     /// Blocks shown in the popup, top to bottom. Unknown or duplicate entries are ignored.
     pub sections: Vec<Section>,
     /// Show the Now Playing card beside the connectivity card.
@@ -99,6 +115,7 @@ pub struct ControlCenterConfig {
 impl Default for ControlCenterConfig {
     fn default() -> Self {
         Self {
+            theme_preset: ThemePreset::Classic,
             sections: vec![
                 Section::Connectivity,
                 Section::Toggles,
@@ -154,10 +171,12 @@ mod tests {
     #[test]
     fn control_center_sections_are_deduplicated_and_volume_clamped() {
         let config = ControlCenterConfig {
+            theme_preset: ThemePreset::LiquidGlass,
             sections: vec![Section::Sound, Section::Display, Section::Sound],
             show_now_playing: false,
             max_volume: 500,
         };
+        assert_eq!(config.theme_preset, ThemePreset::LiquidGlass);
         assert_eq!(
             config.unique_sections(),
             vec![Section::Sound, Section::Display]

@@ -6,7 +6,7 @@ use cosmic::{
     Element, Task, app,
     applet::token::subscription::{TokenRequest, TokenUpdate, activation_token_subscription},
     cctk::sctk::reexports::calloop,
-    cosmic_config::{Config, ConfigSet, CosmicConfigEntry},
+    cosmic_config::{Config, ConfigGet, ConfigSet, CosmicConfigEntry},
     cosmic_theme::{THEME_MODE_ID, ThemeMode},
     iced::{
         Alignment, Length, Subscription,
@@ -78,6 +78,8 @@ pub struct ControlCenter {
     audio_tx: Option<UnboundedSender<audio::Request>>,
     /// Volume shown while dragging, before the daemon confirms it.
     volume_preview: Option<u32>,
+    opacity: f32,
+    opacity_preview: Option<f32>,
     media: Option<Box<NowPlaying>>,
     session_bus: Option<zbus::Connection>,
     brightness: Brightness,
@@ -112,6 +114,8 @@ pub enum Message {
     DisconnectDevice(bluer::Address),
     SetVolume(u32),
     VolumeReleased,
+    SetOpacity(u32),
+    OpacityReleased,
     ToggleMute,
     SetSink(u32),
     SetBrightness(i32),
@@ -186,13 +190,14 @@ fn sym(name: &str, size: u16) -> cosmic::widget::Icon {
 fn round_button<'a>(
     icon_name: &'a str,
     on: bool,
+    preset: macos_common::config::ThemePreset,
     message: Option<Message>,
 ) -> Element<'a, Message> {
     button::custom(container(sym(icon_name, 16)).center(Length::Fill))
         .width(Length::Fixed(32.0))
         .height(Length::Fixed(32.0))
         .padding(0)
-        .class(style::round_toggle(on))
+        .class(style::round_toggle_preset(on, preset))
         .on_press_maybe(message)
         .into()
 }
@@ -278,7 +283,7 @@ impl ControlCenter {
                     caption: Option<String>,
                     page: Page| {
             row![
-                round_button(icon_name, on, toggle),
+                round_button(icon_name, on, self.config.theme_preset, toggle),
                 button::custom(
                     column![
                         text::body(title).font(cosmic::font::semibold()),
@@ -286,7 +291,7 @@ impl ControlCenter {
                     ]
                     .width(Length::Fill),
                 )
-                .class(style::flat())
+                .class(style::flat_preset(self.config.theme_preset))
                 .padding([2, 6])
                 .width(Length::Fill)
                 .on_press(Message::ShowPage(page)),
@@ -323,7 +328,7 @@ impl ControlCenter {
         )
         .padding(10)
         .width(Length::Fill)
-        .class(style::tile())
+        .class(style::tile_preset(self.config.theme_preset))
         .into()
     }
 
@@ -341,6 +346,7 @@ impl ControlCenter {
             round_button(
                 "media-skip-backward-symbolic",
                 false,
+                self.config.theme_preset,
                 media
                     .can_go_previous
                     .then_some(Message::MediaControl(media::Request::Previous)),
@@ -352,6 +358,7 @@ impl ControlCenter {
                     "media-playback-start-symbolic"
                 },
                 false,
+                self.config.theme_preset,
                 media
                     .can_play_pause
                     .then_some(Message::MediaControl(media::Request::PlayPause)),
@@ -359,6 +366,7 @@ impl ControlCenter {
             round_button(
                 "media-skip-forward-symbolic",
                 false,
+                self.config.theme_preset,
                 media
                     .can_go_next
                     .then_some(Message::MediaControl(media::Request::Next)),
@@ -381,17 +389,19 @@ impl ControlCenter {
             .padding(10)
             .width(Length::Fill)
             .height(Length::Fill)
-            .class(style::tile())
+            .class(style::tile_preset(self.config.theme_preset))
             .into(),
         )
     }
 
     fn toggles_row(&self) -> Element<'_, Message> {
+        let preset = self.config.theme_preset;
         let focus = container(
             row![
                 round_button(
                     "notification-disabled-symbolic",
                     self.do_not_disturb,
+                    preset,
                     Some(Message::SetDoNotDisturb(!self.do_not_disturb))
                 ),
                 column![
@@ -409,13 +419,13 @@ impl ControlCenter {
         .padding(10)
         .width(Length::FillPortion(2))
         .center_y(Length::Fill)
-        .class(style::tile());
+        .class(style::tile_preset(preset));
 
         let square = |icon_name: &'static str, on: bool, message: Message| {
-            container(round_button(icon_name, on, Some(message)))
+            container(round_button(icon_name, on, preset, Some(message)))
                 .center_x(Length::FillPortion(1))
                 .center_y(Length::Fill)
-                .class(style::tile())
+                .class(style::tile_preset(preset))
         };
 
         row![
@@ -464,7 +474,7 @@ impl ControlCenter {
             )
             .padding(10)
             .width(Length::Fill)
-            .class(style::tile())
+            .class(style::tile_preset(self.config.theme_preset))
             .into(),
         )
     }
@@ -474,15 +484,16 @@ impl ControlCenter {
         let volume = self.volume_preview.or(state.map(|s| s.volume)).unwrap_or(0);
         let muted = state.is_some_and(|s| s.muted);
         let limit = self.config.volume_limit();
+        let preset = self.config.theme_preset;
 
         let body: Element<'_, Message> = if state.is_some_and(|s| s.default_sink.is_some()) {
             row![
-                round_button(volume_icon(volume, muted), false, Some(Message::ToggleMute)),
+                round_button(volume_icon(volume, muted), false, preset, Some(Message::ToggleMute)),
                 slider(0..=limit, volume.min(limit), Message::SetVolume)
                     .on_release(Message::VolumeReleased)
                     .width(Length::Fill),
                 button::custom(sym("go-next-symbolic", 16))
-                    .class(style::flat())
+                    .class(style::flat_preset(preset))
                     .padding(6)
                     .on_press(Message::ShowPage(Page::Sound)),
             ]
@@ -502,11 +513,38 @@ impl ControlCenter {
         )
         .padding(10)
         .width(Length::Fill)
-        .class(style::tile())
+        .class(style::tile_preset(preset))
+        .into()
+    }
+
+    fn opacity_card(&self) -> Element<'_, Message> {
+        let opacity = self.opacity_preview.unwrap_or(self.opacity).clamp(0.05, 1.0);
+        let percent = (opacity * 100.0).round() as u32;
+        let preset = self.config.theme_preset;
+
+        container(
+            column![
+                text::body(fl!("opacity")).font(cosmic::font::semibold()),
+                row![
+                    sym("color-select-symbolic", 16),
+                    slider(5..=100, percent, Message::SetOpacity)
+                        .on_release(Message::OpacityReleased)
+                        .width(Length::Fill),
+                    text::caption(format!("{percent}%")).width(Length::Fixed(36.0)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(6),
+        )
+        .padding(10)
+        .width(Length::Fill)
+        .class(style::tile_preset(preset))
         .into()
     }
 
     fn shortcuts_row(&self) -> Element<'_, Message> {
+        let preset = self.config.theme_preset;
         let battery: Element<'_, Message> = match self.battery {
             Some((percent, on_battery)) => container(
                 row![
@@ -525,15 +563,15 @@ impl ControlCenter {
             )
             .center_x(Length::FillPortion(2))
             .center_y(Length::Fill)
-            .class(style::tile())
+            .class(style::tile_preset(preset))
             .into(),
             None => space::horizontal().width(Length::FillPortion(2)).into(),
         };
         let square = |icon_name: &'static str, message: Message| {
-            container(round_button(icon_name, false, Some(message)))
+            container(round_button(icon_name, false, preset, Some(message)))
                 .center_x(Length::FillPortion(1))
                 .center_y(Length::Fill)
-                .class(style::tile())
+                .class(style::tile_preset(preset))
         };
         row![
             square("system-lock-screen-symbolic", Message::Lock),
@@ -564,7 +602,10 @@ impl ControlCenter {
                     Some(card) => content.push(card),
                     None => content,
                 },
-                Section::Sound => content.push(self.sound_card()),
+                Section::Sound => {
+                    content = content.push(self.sound_card());
+                    content.push(self.opacity_card())
+                }
                 Section::Shortcuts => content.push(self.shortcuts_row()),
             };
         }
@@ -580,9 +621,10 @@ impl ControlCenter {
         settings_label: String,
         settings_page: &'static str,
     ) -> Element<'a, Message> {
+        let preset = self.config.theme_preset;
         let mut header = row![
             button::custom(sym("go-previous-symbolic", 16))
-                .class(style::flat())
+                .class(style::flat_preset(preset))
                 .padding(6)
                 .on_press(Message::ShowPage(Page::Main)),
             text::heading(title).width(Length::Fill),
@@ -608,7 +650,7 @@ impl ControlCenter {
                 container(list).max_height(360.0),
                 divider::horizontal::default(),
                 button::custom(text::body(settings_label))
-                    .class(style::flat())
+                    .class(style::flat_preset(preset))
                     .padding([6, 8])
                     .width(Length::Fill)
                     .on_press(Message::OpenSettings(settings_page)),
@@ -616,11 +658,12 @@ impl ControlCenter {
             .spacing(6),
         )
         .padding(10)
-        .class(style::tile())
+        .class(style::tile_preset(preset))
         .into()
     }
 
     fn list_row<'a>(
+        preset: macos_common::config::ThemePreset,
         icon_name: String,
         label: String,
         detail: Option<String>,
@@ -629,13 +672,13 @@ impl ControlCenter {
     ) -> Element<'a, Message> {
         button::custom(
             row![
-                round_button_owned(icon_name, selected),
+                round_button_owned(icon_name, selected, preset),
                 column![text::body(label), caption_or_empty(detail)].width(Length::Fill),
             ]
             .spacing(8)
             .align_y(Alignment::Center),
         )
-        .class(style::flat())
+        .class(style::flat_preset(preset))
         .padding([4, 6])
         .width(Length::Fill)
         .on_press(message)
@@ -645,6 +688,7 @@ impl ControlCenter {
     fn wifi_page(&self) -> Element<'_, Message> {
         let state = self.wifi.as_deref();
         let on = state.is_some_and(|s| s.enabled);
+        let preset = self.config.theme_preset;
         let items = state
             .map(|s| {
                 s.networks
@@ -671,6 +715,7 @@ impl ControlCenter {
                             Message::ConnectWifi(n.clone())
                         };
                         Self::list_row(
+                            preset,
                             icon_name.to_owned(),
                             n.ssid.clone(),
                             detail,
@@ -697,6 +742,7 @@ impl ControlCenter {
     fn bluetooth_page(&self) -> Element<'_, Message> {
         let state = self.bluetooth.as_deref();
         let on = state.is_some_and(|s| s.powered);
+        let preset = self.config.theme_preset;
         let items = state
             .filter(|s| s.powered)
             .map(|s| {
@@ -714,6 +760,7 @@ impl ControlCenter {
                             Message::ConnectDevice(d.address)
                         };
                         Self::list_row(
+                            preset,
                             format!("{}-symbolic", d.icon),
                             d.name.clone(),
                             detail,
@@ -740,6 +787,7 @@ impl ControlCenter {
     }
 
     fn sound_page(&self) -> Element<'_, Message> {
+        let preset = self.config.theme_preset;
         let items = self
             .audio
             .as_deref()
@@ -754,6 +802,7 @@ impl ControlCenter {
                             "audio-speakers-symbolic"
                         };
                         Self::list_row(
+                            preset,
                             icon_name.to_owned(),
                             sink.name.clone(),
                             None,
@@ -775,11 +824,15 @@ impl ControlCenter {
     }
 }
 
-fn round_button_owned<'a>(icon_name: String, on: bool) -> Element<'a, Message> {
+fn round_button_owned<'a>(
+    icon_name: String,
+    on: bool,
+    preset: macos_common::config::ThemePreset,
+) -> Element<'a, Message> {
     container(icon::from_name(icon_name).size(16).symbolic(true).icon())
         .center(Length::Fixed(32.0))
         .class(if on {
-            style::selected_circle()
+            style::selected_circle_preset(preset)
         } else {
             cosmic::theme::Container::Transparent
         })
@@ -801,9 +854,18 @@ impl cosmic::Application for ControlCenter {
     }
 
     fn init(core: app::Core, _flags: ()) -> (Self, app::Task<Message>) {
+        let config = Config::new(CONTROL_CENTER_APP_ID, 1)
+            .ok()
+            .and_then(|c| ControlCenterConfig::get_entry(&c).ok())
+            .unwrap_or_default();
+        let opacity = Config::new("com.system76.CosmicPanel.Panel", 1)
+            .ok()
+            .and_then(|c| c.get::<f32>("opacity").ok())
+            .unwrap_or(0.80);
         let applet = Self {
             core,
-            config: ControlCenterConfig::default(),
+            config,
+            opacity,
             dark_mode: ThemeMode::config()
                 .ok()
                 .and_then(|c| ThemeMode::get_entry(&c).ok())
@@ -1015,6 +1077,17 @@ impl cosmic::Application for ControlCenter {
                 send(self.audio_tx.as_ref(), audio::Request::SetVolume(volume));
             }
             Message::VolumeReleased => self.volume_preview = None,
+            Message::SetOpacity(percent) => {
+                let opacity = (percent as f32 / 100.0).clamp(0.05, 1.0);
+                self.opacity_preview = Some(opacity);
+            }
+            Message::OpacityReleased => {
+                if let Some(opacity) = self.opacity_preview.take() {
+                    self.opacity = opacity;
+                    write_config("com.system76.CosmicPanel.Panel", 1, "opacity", opacity);
+                    let _ = macos_setup::theme::apply_system_theme(self.config.theme_preset, opacity);
+                }
+            }
             Message::ToggleMute => send(self.audio_tx.as_ref(), audio::Request::ToggleMute),
             Message::SetSink(id) => send(self.audio_tx.as_ref(), audio::Request::SetDefault(id)),
             Message::SetBrightness(raw) => {

@@ -168,6 +168,16 @@ pub fn current_options() -> Options {
     if let Ok(time) = open(panel_profile::TIME_COMPONENT) {
         options.clock_weekday = time.get("show_weekday").unwrap_or(options.clock_weekday);
     }
+    if let Ok(cc) = open(macos_common::CONTROL_CENTER_APP_ID)
+        && let Ok(preset) = cc.get("theme_preset")
+    {
+        options.theme_preset = preset;
+        if options.theme_preset == macos_common::config::ThemePreset::LiquidGlass
+            && (options.opacity - 0.8).abs() < f32::EPSILON
+        {
+            options.opacity = 0.55;
+        }
+    }
     options.keep_notifications = right.iter().any(|id| id == panel_profile::NOTIFICATIONS);
     options
 }
