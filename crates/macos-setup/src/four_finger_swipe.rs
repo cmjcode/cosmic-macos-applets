@@ -2,8 +2,9 @@
 //! Four-finger horizontal swipe to switch windows (like Ctrl+Tab / Windows+Tab).
 //!
 //! Tracks four-finger horizontal gestures on the touchpad via evdev and triggers
-//! the COSMIC window switcher (`cosmic-launcher alt-tab` / `shift-alt-tab`),
-//! activating the selected window when fingers are lifted.
+//! the COSMIC window switcher with smooth modifier holding (Ctrl+Tab or Alt+Tab),
+//! maintaining a stable, flicker-free switcher overlay during gesture movement
+//! and cleanly activating the chosen window when fingers are lifted.
 
 use anyhow::{Context, Result, bail};
 use std::{
@@ -11,9 +12,8 @@ use std::{
     io::Read,
     os::fd::AsRawFd,
     path::{Path, PathBuf},
-    process::Command,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::{user_service, window_controls::find_setup_binary};
@@ -32,10 +32,17 @@ const ABS_MT_POSITION_X: u16 = 0x35;
 const ABS_MT_POSITION_Y: u16 = 0x36;
 const ABS_MT_TRACKING_ID: u16 = 0x39;
 
-const KEY_ENTER: u16 = 28;
+pub const KEY_TAB: u16 = 15;
+pub const KEY_ENTER: u16 = 28;
+pub const KEY_LEFTCTRL: u16 = 29;
+pub const KEY_LEFTSHIFT: u16 = 42;
+pub const KEY_LEFTALT: u16 = 56;
+pub const KEY_LEFTMETA: u16 = 125;
 
 const MAX_SLOTS: usize = 16;
 const DEFAULT_THRESHOLD: i32 = 350;
+const CONTACT_GRACE: Duration = Duration::from_millis(150);
+const RELEASE_GRACE: Duration = Duration::from_millis(400);
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -249,6 +256,29 @@ fn query_abs_width(fd: libc::c_int) -> Option<i32> {
     None
 }
 
+/// Detects whether the user mapped WindowSwitcher to Ctrl, Super, or Alt.
+#[must_use]
+pub fn detect_switcher_modifier() -> u16 {
+    if let Ok(home) = std::env::var("HOME") {
+        let custom = PathBuf::from(home)
+            .join(".config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom");
+        if let Ok(text) = fs::read_to_string(custom) {
+            for part in text.split("):") {
+                if part.contains("WindowSwitcher") {
+                    if part.contains("Ctrl") {
+                        return KEY_LEFTCTRL;
+                    } else if part.contains("Super") {
+                        return KEY_LEFTMETA;
+                    } else if part.contains("Alt") {
+                        return KEY_LEFTALT;
+                    }
+                }
+            }
+        }
+    }
+    KEY_LEFTALT
+}
+
 pub struct VirtualKeyboard {
     file: File,
 }
@@ -279,13 +309,17 @@ impl VirtualKeyboard {
             {
                 bail!("ioctl UI_SET_EVBIT EV_SYN failed");
             }
-            if libc::ioctl(
-                fd,
-                0x40045565, /* UI_SET_KEYBIT */
-                KEY_ENTER as libc::c_int,
-            ) < 0
-            {
-                bail!("ioctl UI_SET_KEYBIT KEY_ENTER failed");
+            for &k in &[
+                KEY_TAB,
+                KEY_ENTER,
+                KEY_LEFTCTRL,
+                KEY_LEFTSHIFT,
+                KEY_LEFTALT,
+                KEY_LEFTMETA,
+            ] {
+                if libc::ioctl(fd, 0x40045565 /* UI_SET_KEYBIT */, k as libc::c_int) < 0 {
+                    bail!("ioctl UI_SET_KEYBIT {k} failed");
+                }
             }
 
             let mut setup = UInputSetup {
@@ -386,11 +420,12 @@ pub struct GestureTracker {
     threshold: i32,
 
     // Gesture tracking state
-    in_gesture: bool,
+    pub in_gesture: bool,
     start_x: i32,
     start_y: i32,
     last_trigger_x: i32,
-    swiped: bool,
+    pub swiped: bool,
+    pub last_four_finger_time: Option<Instant>,
 }
 
 impl Default for GestureTracker {
@@ -412,10 +447,11 @@ impl GestureTracker {
             start_y: 0,
             last_trigger_x: 0,
             swiped: false,
+            last_four_finger_time: None,
         }
     }
 
-    pub fn handle_event(&mut self, event: &InputEvent) -> Option<SwipeDirection> {
+    pub fn handle_event(&mut self, event: &InputEvent, now: Instant) -> Option<SwipeDirection> {
         match event.type_ {
             EV_ABS => {
                 match event.code {
@@ -444,16 +480,18 @@ impl GestureTracker {
                 }
                 None
             }
-            EV_SYN if event.code == SYN_REPORT => self.on_sync(),
+            EV_SYN if event.code == SYN_REPORT => self.on_sync(now),
             _ => None,
         }
     }
 
-    fn on_sync(&mut self) -> Option<SwipeDirection> {
+    fn on_sync(&mut self, now: Instant) -> Option<SwipeDirection> {
         let active_count = self.slots.iter().filter(|s| s.active).count();
         let is_four_fingers = active_count == 4 || (self.quadtap && active_count >= 3);
 
         if is_four_fingers {
+            self.last_four_finger_time = Some(now);
+
             let (sum_x, sum_y, count) = self
                 .slots
                 .iter()
@@ -500,16 +538,40 @@ impl GestureTracker {
                 None
             }
         } else {
+            // Check contact grace period before declaring gesture ended
             if self.in_gesture {
+                if let Some(last_seen) = self.last_four_finger_time
+                    && now.duration_since(last_seen) < CONTACT_GRACE
+                {
+                    return None;
+                }
                 let was_swiped = self.swiped;
                 self.in_gesture = false;
                 self.swiped = false;
+                self.last_four_finger_time = None;
                 if was_swiped {
                     return Some(SwipeDirection::Release);
                 }
             }
             None
         }
+    }
+
+    /// Checks if contact grace expired while no events arrived.
+    pub fn check_timeout(&mut self, now: Instant) -> Option<SwipeDirection> {
+        if self.in_gesture
+            && let Some(last_seen) = self.last_four_finger_time
+            && now.duration_since(last_seen) >= CONTACT_GRACE
+        {
+            let was_swiped = self.swiped;
+            self.in_gesture = false;
+            self.swiped = false;
+            self.last_four_finger_time = None;
+            if was_swiped {
+                return Some(SwipeDirection::Release);
+            }
+        }
+        None
     }
 }
 
@@ -519,6 +581,8 @@ pub fn watch() -> Result<()> {
 
     let mut keyboard = VirtualKeyboard::open().context("open virtual keyboard on /dev/uinput")?;
     let event_size = std::mem::size_of::<InputEvent>();
+    let modifier_key = detect_switcher_modifier();
+    eprintln!("detected switcher modifier keycode: {modifier_key}");
 
     loop {
         let Some(device_path) = find_touchpad_device() else {
@@ -546,8 +610,49 @@ pub fn watch() -> Result<()> {
         let threshold = (width / 10).clamp(250, 500);
         let mut tracker = GestureTracker::new(threshold);
 
+        let mut modifier_held = false;
+        let mut pending_release = false;
+        let mut release_time = Instant::now();
+
         let mut buf = vec![0u8; event_size * 32];
         loop {
+            let timeout_ms = if modifier_held && pending_release {
+                let remaining = release_time.saturating_duration_since(Instant::now());
+                (remaining.as_millis().min(1000) as libc::c_int).max(1)
+            } else if tracker.in_gesture && tracker.last_four_finger_time.is_some() {
+                150
+            } else {
+                -1
+            };
+
+            let mut pfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+
+            let poll_res = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+            let now = Instant::now();
+
+            if poll_res == 0 {
+                // Timeout fired
+                if modifier_held && pending_release && now >= release_time {
+                    let _ = keyboard.send_key(modifier_key, 0);
+                    modifier_held = false;
+                    pending_release = false;
+                }
+                if let Some(SwipeDirection::Release) = tracker.check_timeout(now)
+                    && modifier_held
+                {
+                    pending_release = true;
+                    release_time = now + RELEASE_GRACE;
+                }
+                continue;
+            } else if poll_res < 0 {
+                eprintln!("poll error on touchpad device; re-detecting in 1s...");
+                break;
+            }
+
             let bytes_read = match file.read(&mut buf) {
                 Ok(0) => {
                     eprintln!("device closed (EOF); re-detecting in 1s...");
@@ -567,23 +672,42 @@ pub fn watch() -> Result<()> {
                     std::ptr::read_unaligned(buf[offset..].as_ptr() as *const InputEvent)
                 };
 
-                if let Some(direction) = tracker.handle_event(&event) {
+                if let Some(direction) = tracker.handle_event(&event, now) {
                     match direction {
                         SwipeDirection::Right => {
-                            // Forward switch
-                            let _ = Command::new("cosmic-launcher").arg("alt-tab").spawn();
+                            if !modifier_held {
+                                let _ = keyboard.send_key(modifier_key, 1);
+                                modifier_held = true;
+                                thread::sleep(Duration::from_millis(25));
+                            }
+                            let _ = keyboard.tap_key(KEY_TAB);
+                            pending_release = false;
                         }
                         SwipeDirection::Left => {
-                            // Backward switch
-                            let _ = Command::new("cosmic-launcher").arg("shift-alt-tab").spawn();
+                            if !modifier_held {
+                                let _ = keyboard.send_key(modifier_key, 1);
+                                modifier_held = true;
+                                thread::sleep(Duration::from_millis(25));
+                            }
+                            let _ = keyboard.send_key(KEY_LEFTSHIFT, 1);
+                            thread::sleep(Duration::from_millis(15));
+                            let _ = keyboard.tap_key(KEY_TAB);
+                            let _ = keyboard.send_key(KEY_LEFTSHIFT, 0);
+                            pending_release = false;
                         }
                         SwipeDirection::Release => {
-                            // Confirm and activate focused window
-                            let _ = keyboard.tap_key(KEY_ENTER);
+                            if modifier_held {
+                                pending_release = true;
+                                release_time = now + RELEASE_GRACE;
+                            }
                         }
                     }
                 }
             }
+        }
+
+        if modifier_held {
+            let _ = keyboard.send_key(modifier_key, 0);
         }
 
         thread::sleep(Duration::from_secs(1));
@@ -612,60 +736,82 @@ mod tests {
     #[test]
     fn ignores_one_to_three_fingers() {
         let mut tracker = GestureTracker::new(200);
+        let now = Instant::now();
 
         // Put 3 fingers down
         for slot in 0..3 {
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_SLOT,
-                value: slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_TRACKING_ID,
-                value: 10 + slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_X,
-                value: 1000,
-                ..Default::default()
-            });
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_SLOT,
+                    value: slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_TRACKING_ID,
+                    value: 10 + slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_X,
+                    value: 1000,
+                    ..Default::default()
+                },
+                now,
+            );
         }
         assert_eq!(
-            tracker.handle_event(&InputEvent {
-                type_: EV_SYN,
-                code: SYN_REPORT,
-                value: 0,
-                ..Default::default()
-            }),
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_SYN,
+                    code: SYN_REPORT,
+                    value: 0,
+                    ..Default::default()
+                },
+                now,
+            ),
             None
         );
 
         // Move 3 fingers by 500 units
         for slot in 0..3 {
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_SLOT,
-                value: slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_X,
-                value: 1500,
-                ..Default::default()
-            });
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_SLOT,
+                    value: slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_X,
+                    value: 1500,
+                    ..Default::default()
+                },
+                now,
+            );
         }
         assert_eq!(
-            tracker.handle_event(&InputEvent {
-                type_: EV_SYN,
-                code: SYN_REPORT,
-                value: 0,
-                ..Default::default()
-            }),
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_SYN,
+                    code: SYN_REPORT,
+                    value: 0,
+                    ..Default::default()
+                },
+                now,
+            ),
             None
         );
     }
@@ -673,241 +819,339 @@ mod tests {
     #[test]
     fn four_finger_swipe_right_and_release() {
         let mut tracker = GestureTracker::new(200);
+        let now = Instant::now();
 
         // Put 4 fingers down at x=1000, y=1000
         for slot in 0..4 {
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_SLOT,
-                value: slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_TRACKING_ID,
-                value: 20 + slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_X,
-                value: 1000,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_Y,
-                value: 1000,
-                ..Default::default()
-            });
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_SLOT,
+                    value: slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_TRACKING_ID,
+                    value: 20 + slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_X,
+                    value: 1000,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_Y,
+                    value: 1000,
+                    ..Default::default()
+                },
+                now,
+            );
         }
         assert_eq!(
-            tracker.handle_event(&InputEvent {
-                type_: EV_SYN,
-                code: SYN_REPORT,
-                value: 0,
-                ..Default::default()
-            }),
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_SYN,
+                    code: SYN_REPORT,
+                    value: 0,
+                    ..Default::default()
+                },
+                now,
+            ),
             None
         );
 
         // Move 4 fingers to x=1300 (+300 units > 200 threshold)
         for slot in 0..4 {
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_SLOT,
-                value: slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_X,
-                value: 1300,
-                ..Default::default()
-            });
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_SLOT,
+                    value: slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_X,
+                    value: 1300,
+                    ..Default::default()
+                },
+                now,
+            );
         }
-        let dir = tracker.handle_event(&InputEvent {
-            type_: EV_SYN,
-            code: SYN_REPORT,
-            value: 0,
-            ..Default::default()
-        });
+        let dir = tracker.handle_event(
+            &InputEvent {
+                type_: EV_SYN,
+                code: SYN_REPORT,
+                value: 0,
+                ..Default::default()
+            },
+            now,
+        );
         assert_eq!(dir, Some(SwipeDirection::Right));
 
-        // Lift fingers (tracking_id = -1)
+        // Lift fingers (tracking_id = -1) after contact grace
+        let lift_time = now + CONTACT_GRACE + Duration::from_millis(10);
         for slot in 0..4 {
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_SLOT,
-                value: slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_TRACKING_ID,
-                value: -1,
-                ..Default::default()
-            });
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_SLOT,
+                    value: slot,
+                    ..Default::default()
+                },
+                lift_time,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_TRACKING_ID,
+                    value: -1,
+                    ..Default::default()
+                },
+                lift_time,
+            );
         }
-        let rel = tracker.handle_event(&InputEvent {
-            type_: EV_SYN,
-            code: SYN_REPORT,
-            value: 0,
-            ..Default::default()
-        });
+        let rel = tracker.handle_event(
+            &InputEvent {
+                type_: EV_SYN,
+                code: SYN_REPORT,
+                value: 0,
+                ..Default::default()
+            },
+            lift_time,
+        );
         assert_eq!(rel, Some(SwipeDirection::Release));
     }
 
     #[test]
     fn four_finger_swipe_left_and_release() {
         let mut tracker = GestureTracker::new(200);
+        let now = Instant::now();
 
         // Put 4 fingers down at x=2000, y=1000
         for slot in 0..4 {
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_SLOT,
-                value: slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_TRACKING_ID,
-                value: 30 + slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_X,
-                value: 2000,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_Y,
-                value: 1000,
-                ..Default::default()
-            });
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_SLOT,
+                    value: slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_TRACKING_ID,
+                    value: 30 + slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_X,
+                    value: 2000,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_Y,
+                    value: 1000,
+                    ..Default::default()
+                },
+                now,
+            );
         }
-        tracker.handle_event(&InputEvent {
-            type_: EV_SYN,
-            code: SYN_REPORT,
-            value: 0,
-            ..Default::default()
-        });
+        tracker.handle_event(
+            &InputEvent {
+                type_: EV_SYN,
+                code: SYN_REPORT,
+                value: 0,
+                ..Default::default()
+            },
+            now,
+        );
 
         // Move 4 fingers to x=1700 (-300 units)
         for slot in 0..4 {
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_SLOT,
-                value: slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_X,
-                value: 1700,
-                ..Default::default()
-            });
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_SLOT,
+                    value: slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_X,
+                    value: 1700,
+                    ..Default::default()
+                },
+                now,
+            );
         }
-        let dir = tracker.handle_event(&InputEvent {
-            type_: EV_SYN,
-            code: SYN_REPORT,
-            value: 0,
-            ..Default::default()
-        });
+        let dir = tracker.handle_event(
+            &InputEvent {
+                type_: EV_SYN,
+                code: SYN_REPORT,
+                value: 0,
+                ..Default::default()
+            },
+            now,
+        );
         assert_eq!(dir, Some(SwipeDirection::Left));
 
-        // Lift fingers
+        // Lift fingers after contact grace
+        let lift_time = now + CONTACT_GRACE + Duration::from_millis(10);
         for slot in 0..4 {
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_SLOT,
-                value: slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_TRACKING_ID,
-                value: -1,
-                ..Default::default()
-            });
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_SLOT,
+                    value: slot,
+                    ..Default::default()
+                },
+                lift_time,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_TRACKING_ID,
+                    value: -1,
+                    ..Default::default()
+                },
+                lift_time,
+            );
         }
-        let rel = tracker.handle_event(&InputEvent {
-            type_: EV_SYN,
-            code: SYN_REPORT,
-            value: 0,
-            ..Default::default()
-        });
+        let rel = tracker.handle_event(
+            &InputEvent {
+                type_: EV_SYN,
+                code: SYN_REPORT,
+                value: 0,
+                ..Default::default()
+            },
+            lift_time,
+        );
         assert_eq!(rel, Some(SwipeDirection::Release));
     }
 
     #[test]
     fn vertical_swipes_are_ignored() {
         let mut tracker = GestureTracker::new(200);
+        let now = Instant::now();
 
         // Put 4 fingers down at x=1000, y=1000
         for slot in 0..4 {
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_SLOT,
-                value: slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_TRACKING_ID,
-                value: 40 + slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_X,
-                value: 1000,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_Y,
-                value: 1000,
-                ..Default::default()
-            });
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_SLOT,
+                    value: slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_TRACKING_ID,
+                    value: 40 + slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_X,
+                    value: 1000,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_Y,
+                    value: 1000,
+                    ..Default::default()
+                },
+                now,
+            );
         }
-        tracker.handle_event(&InputEvent {
-            type_: EV_SYN,
-            code: SYN_REPORT,
-            value: 0,
-            ..Default::default()
-        });
+        tracker.handle_event(
+            &InputEvent {
+                type_: EV_SYN,
+                code: SYN_REPORT,
+                value: 0,
+                ..Default::default()
+            },
+            now,
+        );
 
         // Move primarily in Y: y=1600 (dy=600), x=1050 (dx=50)
         for slot in 0..4 {
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_SLOT,
-                value: slot,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_X,
-                value: 1050,
-                ..Default::default()
-            });
-            tracker.handle_event(&InputEvent {
-                type_: EV_ABS,
-                code: ABS_MT_POSITION_Y,
-                value: 1600,
-                ..Default::default()
-            });
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_SLOT,
+                    value: slot,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_X,
+                    value: 1050,
+                    ..Default::default()
+                },
+                now,
+            );
+            tracker.handle_event(
+                &InputEvent {
+                    type_: EV_ABS,
+                    code: ABS_MT_POSITION_Y,
+                    value: 1600,
+                    ..Default::default()
+                },
+                now,
+            );
         }
-        let dir = tracker.handle_event(&InputEvent {
-            type_: EV_SYN,
-            code: SYN_REPORT,
-            value: 0,
-            ..Default::default()
-        });
+        let dir = tracker.handle_event(
+            &InputEvent {
+                type_: EV_SYN,
+                code: SYN_REPORT,
+                value: 0,
+                ..Default::default()
+            },
+            now,
+        );
         assert_eq!(dir, None);
     }
 }
