@@ -17,6 +17,7 @@ anyhow.workspace = true
 cosmic-config.workspace = true
 cosmic-panel-config.workspace = true
 freedesktop-desktop-entry.workspace = true
+libc.workspace = true
 serde.workspace = true
 
 [dev-dependencies]

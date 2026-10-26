@@ -522,7 +522,12 @@ impl ControlCenter {
 
         let body: Element<'_, Message> = if state.is_some_and(|s| s.default_sink.is_some()) {
             row![
-                round_button(volume_icon(volume, muted), false, preset, Some(Message::ToggleMute)),
+                round_button(
+                    volume_icon(volume, muted),
+                    false,
+                    preset,
+                    Some(Message::ToggleMute)
+                ),
                 slider(0..=limit, volume.min(limit), Message::SetVolume)
                     .on_release(Message::VolumeReleased)
                     .width(Length::Fill),
@@ -552,7 +557,10 @@ impl ControlCenter {
     }
 
     fn opacity_card(&self) -> Element<'_, Message> {
-        let opacity = self.opacity_preview.unwrap_or(self.opacity).clamp(0.05, 1.0);
+        let opacity = self
+            .opacity_preview
+            .unwrap_or(self.opacity)
+            .clamp(0.05, 1.0);
         let percent = (opacity * 100.0).round() as u32;
         let preset = self.config.theme_preset;
 

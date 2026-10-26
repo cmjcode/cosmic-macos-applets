@@ -95,7 +95,9 @@ uninstall-notifications:
 # Remove everything `install` created. Backups in ~/.local/state are kept.
 uninstall: uninstall-notifications
     -systemctl --user disable --now cosmic-macos-window-controls.service 2>/dev/null
+    -systemctl --user disable --now cosmic-macos-four-finger-swipe.service 2>/dev/null
     rm -f {{env('XDG_CONFIG_HOME', env('HOME') / '.config')}}/systemd/user/cosmic-macos-window-controls.service
+    rm -f {{env('XDG_CONFIG_HOME', env('HOME') / '.config')}}/systemd/user/cosmic-macos-four-finger-swipe.service
     -systemctl --user daemon-reload
     rm -f {{bindir}}/{{multicall}} {{bindir}}/cosmic-macos-setup
     for applet in {{applets}}; do rm -f {{bindir}}/$applet; done

@@ -5,6 +5,7 @@
 //! so both take the same backups and roll back the same way.
 
 pub mod backup;
+pub mod four_finger_swipe;
 pub mod notifications;
 pub mod panel_profile;
 pub mod profile;
@@ -14,5 +15,5 @@ pub mod user_service;
 pub mod window_controls;
 
 pub use notifications::Position;
-pub use panel_profile::{Change, Options};
+pub use panel_profile::{AutoHide, Change, Options};
 pub use profile::{Plan, RestoreTarget, Restored, Service};

@@ -41,9 +41,11 @@ networks, paired devices, or audio outputs.
 | Control Center | applet `io.github.jayuda.CosmicMacosControlCenter` | Wi-Fi via NetworkManager, Bluetooth via BlueZ, volume and output via cosmic-settings-daemon, brightness, Now Playing via MPRIS, Do Not Disturb, dark mode, screenshot, lock, battery. Every service reconnects on its own. |
 | `cosmic-macos-setup` | CLI | Backs up and then rewrites the panel config. The panel reloads live. `restore` undoes it. |
 | Top Bar Settings | app `io.github.jayuda.CosmicMacosSettings` | Everything below without a terminal. Opens from the system menu or the app launcher. |
+| Auto-hide top bar | opt-in, `--autohide` | Auto-hide the top bar when windows overlap or an app is full screen. Reveal by hovering the top edge. |
 | Window controls on the left | opt-in, `--window-controls-left` | Close, minimize and maximize on the left in GTK apps, Firefox, Chromium and Telegram. See below. |
 | Notification position | `--notifications top-right` and a patched daemon | Popups in any corner or at the top or bottom center. See below. |
 | Three-finger drag | opt-in, `--three-finger-drag` | Switches on [linux-3-finger-drag](https://github.com/lmr97/linux-3-finger-drag), installed separately. See below. |
+| Four-finger swipe | opt-in, `--four-finger-swipe` | Swipe horizontally with four fingers to switch windows (like Ctrl+Tab / Alt+Tab). See below. |
 
 The tray, input source, battery and clock stay COSMIC's own applets. The
 Control Center replaces COSMIC's audio, Bluetooth, network and notification
@@ -122,6 +124,15 @@ Notes:
   the panel. If another registrar already owns the name (for example KDE's),
   the applet uses it instead and takes over if it goes away.
 
+## Auto-hide top bar
+
+```sh
+cosmic-macos-setup apply --autohide       # hide when windows overlap or an app is full screen
+cosmic-macos-setup apply --no-autohide    # keep always visible (default)
+```
+
+Like macOS, the top bar can automatically hide when an application is full screen or when windows overlap it. Moving your cursor to the top edge of the screen temporarily reveals the menu bar. This can also be toggled anytime in Top Bar Settings under *Appearance*.
+
 ## Window controls on the left
 
 ```sh
@@ -187,6 +198,24 @@ changes anything. Notes:
 - Being in the `input` group lets your programs read every input device,
   keyboards included. That is how the tool works; do not add untrusted users.
 - Its logs: `journalctl --user -u three-finger-drag`.
+
+## Four-finger window switch
+
+Swiping horizontally with four fingers on the touchpad switches open windows,
+similar to `Ctrl+Tab` or `Alt+Tab`. Swiping right navigates forward, swiping
+left navigates backward, and lifting your fingers selects and focuses the window.
+
+```sh
+cosmic-macos-setup apply --four-finger-swipe       # enables the user service
+cosmic-macos-setup apply --no-four-finger-swipe    # disables it
+```
+
+- When four fingers swipe horizontally, the watcher invokes `cosmic-launcher`'s
+  window switcher preview and confirms your selection upon lifting your fingers.
+- Vertical four-finger swipes remain untouched for COSMIC's default workspace
+  switching.
+- Works alongside `three-finger-drag` (automatically monitors the touchpad proxy).
+- Its logs: `journalctl --user -u cosmic-macos-four-finger-swipe`.
 
 ## Adding global menu support to your app
 
@@ -676,7 +705,7 @@ Or step by step:
 ```sh
 just install                          # ~/.local/bin, ~/.local/share/applications
 cosmic-macos-setup apply --dry-run    # preview every config change
-cosmic-macos-setup apply              # apply (options: --opacity 0.9, --no-weekday, --keep-notifications, --notifications top-right,
+cosmic-macos-setup apply              # apply (options: --opacity 0.9, --autohide, --no-weekday, --keep-notifications, --notifications top-right,
                                       #   --global-menu, --window-controls-left, --three-finger-drag)
 ```
 
@@ -707,7 +736,7 @@ launcher. It is laid out like COSMIC Settings, with search in the header.
 
 | Page | What it changes |
 |---|---|
-| Top Bar | Apply the profile, panel opacity, weekday, notifications applet, popup position and daemon status, undo the last change, restore the original panel |
+| Top Bar | Apply the profile, panel opacity, auto-hide, weekday, notifications applet, popup position and daemon status, undo the last change, restore the original panel |
 | System Menu | Menu entries, power confirmation, panel icon |
 | Active App | Bold label, longest name, empty label, per-monitor focus, global menu |
 | Control Center | Show, hide and reorder blocks, Now Playing, volume limit |

@@ -6,7 +6,7 @@ use cosmic_config::{Config, ConfigGet};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    backup, notifications,
+    backup, four_finger_swipe, notifications,
     panel_profile::{self, Change, Options},
     three_finger_drag, window_controls,
 };
@@ -20,10 +20,15 @@ fn open(component: &str) -> Result<Config> {
 pub enum Service {
     WindowControlsLeft,
     ThreeFingerDrag,
+    FourFingerSwipe,
 }
 
 impl Service {
-    pub const ALL: [Self; 2] = [Self::WindowControlsLeft, Self::ThreeFingerDrag];
+    pub const ALL: [Self; 3] = [
+        Self::WindowControlsLeft,
+        Self::ThreeFingerDrag,
+        Self::FourFingerSwipe,
+    ];
 
     /// Stable name used in backups.
     #[must_use]
@@ -31,6 +36,7 @@ impl Service {
         match self {
             Self::WindowControlsLeft => "window-controls-left",
             Self::ThreeFingerDrag => "three-finger-drag",
+            Self::FourFingerSwipe => "four-finger-swipe",
         }
     }
 
@@ -43,6 +49,7 @@ impl Service {
         match self {
             Self::WindowControlsLeft => options.window_controls_left,
             Self::ThreeFingerDrag => options.three_finger_drag,
+            Self::FourFingerSwipe => options.four_finger_swipe,
         }
     }
 
@@ -52,6 +59,7 @@ impl Service {
         match self {
             Self::WindowControlsLeft => window_controls::enabled(),
             Self::ThreeFingerDrag => three_finger_drag::enabled(),
+            Self::FourFingerSwipe => four_finger_swipe::enabled(),
         }
     }
 
@@ -59,6 +67,7 @@ impl Service {
         match self {
             Self::WindowControlsLeft => window_controls::set_enabled(enable),
             Self::ThreeFingerDrag => three_finger_drag::set_enabled(enable),
+            Self::FourFingerSwipe => four_finger_swipe::set_enabled(enable),
         }
         .with_context(|| format!("switch {} {}", self.name(), on_off(enable)))
     }
@@ -68,6 +77,7 @@ impl Service {
         match self {
             Self::WindowControlsLeft => Ok(()),
             Self::ThreeFingerDrag => three_finger_drag::check_can_enable(),
+            Self::FourFingerSwipe => four_finger_swipe::check_can_enable(),
         }
     }
 }
@@ -154,6 +164,14 @@ pub fn current_options() -> Options {
         notification_position: notifications::stored(),
         ..Options::default()
     };
+    if let Ok(panel) = open(panel_profile::PANEL_COMPONENT)
+        && let Ok(autohide) = panel.get::<panel_profile::AutoHide>("autohide")
+    {
+        options.autohide = Some(matches!(
+            autohide,
+            panel_profile::AutoHide::OnOverlap | panel_profile::AutoHide::Always
+        ));
+    }
     let Some((left, right)) = wings() else {
         return options;
     };

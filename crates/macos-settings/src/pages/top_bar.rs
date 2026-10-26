@@ -8,7 +8,7 @@ use cosmic::iced::{Alignment, Length};
 use cosmic::widget::{self, button, column, row, settings, text};
 use cosmic_config::{Config, ConfigSet};
 use macos_setup::{
-    Options, backup,
+    AutoHide, Options, backup,
     notifications::{self, Position, Support},
     panel_profile, profile,
 };
@@ -58,6 +58,7 @@ pub enum Message {
     Opacity(u8),
     OpacityReleased,
     Weekday(bool),
+    AutoHide(bool),
     KeepNotifications(bool),
     /// Index into `Position::CHOICES`.
     Position(usize),
@@ -119,7 +120,10 @@ impl Page {
                 self.snapshot = Some(*snapshot);
             }
             Message::ThemePreset(index) => {
-                let Some(preset) = macos_common::config::ThemePreset::CHOICES.get(index).copied() else {
+                let Some(preset) = macos_common::config::ThemePreset::CHOICES
+                    .get(index)
+                    .copied()
+                else {
                     return Task::none();
                 };
                 if let Some(s) = self.snapshot.as_mut() {
@@ -141,7 +145,10 @@ impl Page {
             Message::OpacityReleased => {
                 if let Some(s) = self.snapshot.as_ref() {
                     write(panel_profile::PANEL_COMPONENT, "opacity", s.options.opacity);
-                    let _ = macos_setup::theme::apply_system_theme(s.options.theme_preset, s.options.opacity);
+                    let _ = macos_setup::theme::apply_system_theme(
+                        s.options.theme_preset,
+                        s.options.opacity,
+                    );
                 }
             }
             Message::Weekday(show) => {
@@ -149,6 +156,23 @@ impl Page {
                     s.options.clock_weekday = show;
                     if s.applied {
                         write(panel_profile::TIME_COMPONENT, "show_weekday", show);
+                    }
+                }
+            }
+            Message::AutoHide(enabled) => {
+                if let Some(s) = self.snapshot.as_mut() {
+                    s.options.autohide = Some(enabled);
+                    if s.applied {
+                        write(panel_profile::PANEL_COMPONENT, "exclusive_zone", !enabled);
+                        write(
+                            panel_profile::PANEL_COMPONENT,
+                            "autohide",
+                            if enabled {
+                                AutoHide::OnOverlap
+                            } else {
+                                AutoHide::Never
+                            },
+                        );
                     }
                 }
             }
@@ -209,6 +233,7 @@ impl Page {
                     fl!("theme-preset"),
                     fl!("opacity"),
                     fl!("show-weekday"),
+                    fl!("autohide"),
                     fl!("keep-notifications"),
                 ],
             ),
@@ -291,13 +316,21 @@ impl Page {
         settings::section()
             .title(fl!("appearance"))
             .add(
-                settings::item::builder(fl!("theme-preset"))
-                    .control(widget::dropdown(theme_labels, selected_theme, Message::ThemePreset)),
+                settings::item::builder(fl!("theme-preset")).control(widget::dropdown(
+                    theme_labels,
+                    selected_theme,
+                    Message::ThemePreset,
+                )),
             )
             .add(settings::item(fl!("opacity"), opacity))
             .add(
                 settings::item::builder(fl!("show-weekday"))
                     .toggler(s.options.clock_weekday, Message::Weekday),
+            )
+            .add(
+                settings::item::builder(fl!("autohide"))
+                    .description(fl!("autohide-description"))
+                    .toggler(s.options.autohide.unwrap_or(false), Message::AutoHide),
             )
             .add(
                 settings::item::builder(fl!("keep-notifications"))

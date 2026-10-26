@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use macos_common::config::ThemePreset;
 use macos_setup::{
-    Change, Options, Position, RestoreTarget, Restored, Service, backup,
+    Change, Options, Position, RestoreTarget, Restored, Service, backup, four_finger_swipe,
     notifications::{self, Support},
     panel_profile,
     profile::{self, on_off},
@@ -36,6 +36,9 @@ OPTIONS:
     --theme PRESET Theme preset: classic or liquid-glass (system-wide GTK/COSMIC theme).
     --opacity N    Panel opacity (default 0.8).
     --no-weekday   Do not show the weekday in the clock.
+    --autohide     Auto-hide the top bar when an app is full screen or overlaps.
+                   Hovering the top edge of the screen reveals the bar.
+    --no-autohide  Keep the top bar always visible (default).
     --keep-notifications
                    Keep COSMIC's notification applet next to the Control Center.
     --notifications POS
@@ -64,6 +67,11 @@ OPTIONS:
                    switches its user service on.
     --no-three-finger-drag
                    Switch the three-finger drag service off.
+    --four-finger-swipe
+                   Swipe horizontally with four fingers to switch windows,
+                   like Ctrl+Tab or Windows+Tab.
+    --no-four-finger-swipe
+                   Switch four-finger window switching off.
 
 Service flags are left unchanged when neither form is given, and `restore`
 returns them to their state at backup time.
@@ -81,6 +89,7 @@ enum Command {
     Backups,
     Status,
     WindowControlsWatch,
+    FourFingerSwipeWatch,
     Help,
 }
 
@@ -99,15 +108,23 @@ fn parse(args: &[String]) -> Result<Command> {
                     "--dry-run" | "-n" => dry_run = true,
                     "--force" => force = true,
                     "--theme" => {
-                        let value = it.next().context("--theme needs a preset (classic or liquid-glass)")?;
+                        let value = it
+                            .next()
+                            .context("--theme needs a preset (classic or liquid-glass)")?;
                         match value {
                             "classic" => options.theme_preset = ThemePreset::Classic,
-                            "liquid-glass" | "liquidglass" | "glass" => options.theme_preset = ThemePreset::LiquidGlass,
-                            other => bail!("unknown theme preset: {other} (use classic or liquid-glass)"),
+                            "liquid-glass" | "liquidglass" | "glass" => {
+                                options.theme_preset = ThemePreset::LiquidGlass
+                            }
+                            other => {
+                                bail!("unknown theme preset: {other} (use classic or liquid-glass)")
+                            }
                         }
                         theme_specified = true;
                     }
                     "--no-weekday" => options.clock_weekday = false,
+                    "--autohide" => options.autohide = Some(true),
+                    "--no-autohide" => options.autohide = Some(false),
                     "--keep-notifications" => options.keep_notifications = true,
                     "--notifications" => {
                         let value = it.next().context("--notifications needs a position")?;
@@ -122,6 +139,8 @@ fn parse(args: &[String]) -> Result<Command> {
                     "--window-controls-right" => options.window_controls_left = Some(false),
                     "--three-finger-drag" => options.three_finger_drag = Some(true),
                     "--no-three-finger-drag" => options.three_finger_drag = Some(false),
+                    "--four-finger-swipe" => options.four_finger_swipe = Some(true),
+                    "--no-four-finger-swipe" => options.four_finger_swipe = Some(false),
                     "--opacity" => {
                         let value = it.next().context("--opacity needs a value")?;
                         let opacity: f32 = value.parse().context("--opacity must be a number")?;
@@ -154,6 +173,7 @@ fn parse(args: &[String]) -> Result<Command> {
         "backups" => Ok(Command::Backups),
         "status" => Ok(Command::Status),
         "window-controls-watch" => Ok(Command::WindowControlsWatch),
+        "four-finger-swipe-watch" => Ok(Command::FourFingerSwipeWatch),
         other => bail!("unknown command: {other}\n\n{USAGE}"),
     }
 }
@@ -172,6 +192,9 @@ fn apply(dry_run: bool, force: bool, options: &Options, theme_specified: bool) -
     if !theme_specified {
         options.theme_preset = profile::current_options().theme_preset;
     }
+    if options.autohide.is_none() {
+        options.autohide = profile::current_options().autohide;
+    }
     let plan = profile::plan(&options, force)?;
     if dry_run {
         println!("Dry run: checking macOS top bar profile...");
@@ -186,7 +209,10 @@ fn apply(dry_run: bool, force: bool, options: &Options, theme_specified: bool) -
     theme::apply_system_theme(options.theme_preset, options.opacity)?;
 
     if plan.is_empty() {
-        println!("Applied {:?} theme. The macOS panel layout is up to date.", options.theme_preset);
+        println!(
+            "Applied {:?} theme. The macOS panel layout is up to date.",
+            options.theme_preset
+        );
     } else {
         println!("Applying macOS top bar profile...");
         print_changes(&plan.changes);
@@ -230,6 +256,7 @@ fn run(command: Command) -> Result<()> {
         } => apply(dry_run, force, &options, theme_specified)?,
         Command::Restore(dir) => restore(dir)?,
         Command::WindowControlsWatch => window_controls::watch()?,
+        Command::FourFingerSwipeWatch => four_finger_swipe::watch()?,
         Command::Backups => {
             let backups = backup::list(&backup::backups_dir()?)?;
             if backups.is_empty() {
@@ -251,6 +278,10 @@ fn run(command: Command) -> Result<()> {
             for service in Service::ALL {
                 println!("service {}: {}", service.name(), on_off(service.enabled()));
             }
+            println!(
+                "top bar auto-hide: {}",
+                on_off(profile::current_options().autohide.unwrap_or(false))
+            );
             println!(
                 "notifications: position {}, {}",
                 notifications::stored().map_or("unset", Position::name),
@@ -320,10 +351,23 @@ mod tests {
                     global_menu: Some(true),
                     window_controls_left: None,
                     three_finger_drag: None,
+                    four_finger_swipe: None,
+                    autohide: None,
                 },
                 theme_specified: false,
             }
         );
+    }
+
+    #[test]
+    fn autohide_flag_is_tristate() {
+        let autohide = |a: &str| match parse(&args(a)).unwrap() {
+            Command::Apply { options, .. } => options.autohide,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(autohide("apply"), None);
+        assert_eq!(autohide("apply --autohide"), Some(true));
+        assert_eq!(autohide("apply --no-autohide"), Some(false));
     }
 
     #[test]
@@ -333,7 +377,10 @@ mod tests {
             other => panic!("{other:?}"),
         };
         assert_eq!(theme("apply"), ThemePreset::Classic);
-        assert_eq!(theme("apply --theme liquid-glass"), ThemePreset::LiquidGlass);
+        assert_eq!(
+            theme("apply --theme liquid-glass"),
+            ThemePreset::LiquidGlass
+        );
         assert_eq!(theme("apply --theme classic"), ThemePreset::Classic);
     }
 
@@ -351,23 +398,29 @@ mod tests {
     #[test]
     fn service_flags_are_tristate() {
         let opts = |a: &str| match parse(&args(a)).unwrap() {
-            Command::Apply { options, .. } => {
-                (options.window_controls_left, options.three_finger_drag)
-            }
+            Command::Apply { options, .. } => (
+                options.window_controls_left,
+                options.three_finger_drag,
+                options.four_finger_swipe,
+            ),
             other => panic!("{other:?}"),
         };
-        assert_eq!(opts("apply"), (None, None));
+        assert_eq!(opts("apply"), (None, None, None));
         assert_eq!(
-            opts("apply --window-controls-left --three-finger-drag"),
-            (Some(true), Some(true))
+            opts("apply --window-controls-left --three-finger-drag --four-finger-swipe"),
+            (Some(true), Some(true), Some(true))
         );
         assert_eq!(
-            opts("apply --window-controls-right --no-three-finger-drag"),
-            (Some(false), Some(false))
+            opts("apply --window-controls-right --no-three-finger-drag --no-four-finger-swipe"),
+            (Some(false), Some(false), Some(false))
         );
         assert_eq!(
             parse(&args("window-controls-watch")).unwrap(),
             Command::WindowControlsWatch
+        );
+        assert_eq!(
+            parse(&args("four-finger-swipe-watch")).unwrap(),
+            Command::FourFingerSwipeWatch
         );
     }
 

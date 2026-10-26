@@ -5,7 +5,7 @@ use cosmic::Element;
 use cosmic::app::Task;
 use cosmic::iced::{Alignment, Length};
 use cosmic::widget::{self, button, column, settings, text};
-use macos_setup::{Service, profile, three_finger_drag};
+use macos_setup::{Service, four_finger_swipe, profile, three_finger_drag};
 
 use super::{SectionDef, blocking, error_text, top_bar::warning};
 use crate::{app, fl};
@@ -15,6 +15,8 @@ pub struct Snapshot {
     controls_left: bool,
     drag: bool,
     drag_missing: Vec<&'static str>,
+    four_finger_swipe: bool,
+    four_finger_swipe_missing: Vec<&'static str>,
 }
 
 fn load() -> Snapshot {
@@ -22,6 +24,8 @@ fn load() -> Snapshot {
         controls_left: Service::WindowControlsLeft.enabled(),
         drag: Service::ThreeFingerDrag.enabled(),
         drag_missing: three_finger_drag::missing_now(),
+        four_finger_swipe: Service::FourFingerSwipe.enabled(),
+        four_finger_swipe_missing: four_finger_swipe::missing_now(),
     }
 }
 
@@ -86,7 +90,10 @@ impl Page {
     pub fn sections(&self) -> Vec<SectionDef> {
         vec![
             SectionDef::new(fl!("window-controls"), [fl!("controls-left")]),
-            SectionDef::new(fl!("touchpad"), [fl!("three-finger-drag")]),
+            SectionDef::new(
+                fl!("touchpad"),
+                [fl!("three-finger-drag"), fl!("four-finger-swipe")],
+            ),
         ]
     }
 
@@ -146,6 +153,24 @@ impl Page {
                     .spacing(cosmic::theme::spacing().space_xs);
                 section = section.add(settings::item_row(vec![help.into()]));
             }
+
+            let swipe_ready = s.four_finger_swipe_missing.is_empty();
+            section = section.add(
+                settings::item::builder(fl!("four-finger-swipe"))
+                    .description(fl!("four-finger-swipe-description"))
+                    .toggler_maybe(
+                        s.four_finger_swipe,
+                        toggle(Service::FourFingerSwipe, swipe_ready || s.four_finger_swipe),
+                    ),
+            );
+            if !swipe_ready {
+                let missing = s.four_finger_swipe_missing.iter().fold(
+                    column::with_capacity(s.four_finger_swipe_missing.len()),
+                    |col, item| col.push(text::caption(format!("• {item}"))),
+                );
+                section = section.add(settings::item_row(vec![missing.into()]));
+            }
+
             if let Some(error) = &self.error {
                 section = section.add(warning(error.clone()));
             }

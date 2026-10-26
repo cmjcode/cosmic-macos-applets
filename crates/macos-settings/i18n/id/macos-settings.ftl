@@ -32,8 +32,13 @@ result-restored = { $count ->
    *[other] { $count } pengaturan dipulihkan.
 }
 appearance = Tampilan
+theme-preset = Preset Tema
+theme-classic = macOS Klasik
+theme-liquid-glass = Liquid Glass (Seluruh Sistem)
 opacity = Opasitas panel
 show-weekday = Tampilkan nama hari di jam
+autohide = Sembunyikan top bar secara otomatis
+autohide-description = Sembunyikan top bar saat aplikasi tumpang tindih atau full screen. Arahkan mouse ke tepi atas untuk memunculkannya.
 keep-notifications = Pertahankan applet notifikasi
 keep-notifications-description = Menampilkan riwayat notifikasi di samping Control Center. Popup lalu muncul di sebelahnya.
 notifications = Notifikasi
@@ -111,5 +116,7 @@ touchpad = Touchpad
 three-finger-drag = Drag tiga jari
 three-finger-drag-description = Geser dengan tiga jari untuk memindahkan jendela dan memilih teks, seperti di Mac.
 three-finger-drag-setup = Drag tiga jari butuh linux-3-finger-drag, dipasang sekali lewat terminal dengan sudo. Setelah itu login ulang.
+four-finger-swipe = Pindah jendela 4 jari
+four-finger-swipe-description = Geser horizontal dengan 4 jari untuk berpindah jendela, seperti Ctrl+Tab atau Windows+Tab.
 copy-commands = Salin perintah
 project-page = Halaman proyek

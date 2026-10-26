@@ -107,7 +107,11 @@ button:hover, .button:hover {{\n\
     Ok(())
 }
 
-fn update_cosmic_theme_container_opacities(home: &Path, preset: ThemePreset, opacity: f32) -> Result<()> {
+fn update_cosmic_theme_container_opacities(
+    home: &Path,
+    preset: ThemePreset,
+    opacity: f32,
+) -> Result<()> {
     let cosmic_dir = home.join(".config").join("cosmic");
     let is_frosted = matches!(preset, ThemePreset::LiquidGlass);
     let target_alpha = match preset {
@@ -216,7 +220,8 @@ fn update_v2_hex_alpha(content: &str, alpha_hex: &str) -> String {
             && line.len() >= hash_idx + 9
         {
             let hex_part = &line[hash_idx..hash_idx + 9];
-            if hex_part.starts_with('#') && hex_part.chars().skip(1).all(|c| c.is_ascii_hexdigit()) {
+            if hex_part.starts_with('#') && hex_part.chars().skip(1).all(|c| c.is_ascii_hexdigit())
+            {
                 let mut new_line = String::new();
                 new_line.push_str(&line[..hash_idx + 7]);
                 new_line.push_str(alpha_hex);
@@ -287,5 +292,3 @@ mod tests {
         assert!(updated.contains("base: \"#2E2E2E8C\","));
     }
 }
-
-

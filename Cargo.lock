@@ -3415,6 +3415,7 @@ dependencies = [
  "cosmic-config",
  "cosmic-panel-config",
  "freedesktop-desktop-entry",
+ "libc",
  "macos-common",
  "serde",
  "tempfile",

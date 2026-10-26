@@ -3,7 +3,8 @@
 
 use anyhow::{Context, Result};
 use cosmic_config::{Config, ConfigGet, ConfigSet};
-use cosmic_panel_config::{AutoHide, CosmicPanelBackground, PanelAnchor, PanelSize};
+pub use cosmic_panel_config::AutoHide;
+use cosmic_panel_config::{CosmicPanelBackground, PanelAnchor, PanelSize};
 use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 
@@ -66,6 +67,10 @@ pub struct Options {
     pub window_controls_left: Option<bool>,
     /// Three-finger drag through linux-3-finger-drag; `None` leaves it as is.
     pub three_finger_drag: Option<bool>,
+    /// Four-finger horizontal swipe to switch windows; `None` leaves it as is.
+    pub four_finger_swipe: Option<bool>,
+    /// Auto-hide the top bar on overlap / full screen; `None` leaves it as is.
+    pub autohide: Option<bool>,
 }
 
 impl Default for Options {
@@ -79,6 +84,8 @@ impl Default for Options {
             global_menu: None,
             window_controls_left: None,
             three_finger_drag: None,
+            four_finger_swipe: None,
+            autohide: None,
         }
     }
 }
@@ -94,6 +101,7 @@ impl PartialEq for Options {
             && self.global_menu == other.global_menu
             && self.window_controls_left == other.window_controls_left
             && self.three_finger_drag == other.three_finger_drag
+            && self.autohide == other.autohide
     }
 }
 
@@ -175,6 +183,10 @@ pub fn panel_changes(panel: &Config, options: &Options, right: Vec<String>) -> V
         }
         ThemePreset::Classic => options.opacity,
     };
+    let (autohide, exclusive_zone) = match options.autohide {
+        Some(true) => (AutoHide::OnOverlap, false),
+        Some(false) | None => (AutoHide::Never, true),
+    };
     [
         diff(panel, c, "anchor", PanelAnchor::Top),
         diff(panel, c, "anchor_gap", false),
@@ -193,8 +205,8 @@ pub fn panel_changes(panel: &Config, options: &Options, right: Vec<String>) -> V
         diff(panel, c, "size_center", None::<PanelSize>),
         diff(panel, c, "background", CosmicPanelBackground::ThemeDefault),
         diff(panel, c, "opacity", opacity.clamp(0.0, 1.0)),
-        diff(panel, c, "exclusive_zone", true),
-        diff(panel, c, "autohide", AutoHide::Never),
+        diff(panel, c, "exclusive_zone", exclusive_zone),
+        diff(panel, c, "autohide", autohide),
         diff(panel, c, "keep_style_on_maximize", true),
         diff(panel, c, "plugins_wings", Some((left, right))),
         diff(panel, c, "plugins_center", None::<Vec<String>>),
@@ -321,6 +333,46 @@ mod tests {
         assert!(
             active_app_changes(&applet, &Options::default()).is_empty(),
             "re-running apply without the flag keeps it enabled"
+        );
+    }
+
+    #[test]
+    fn autohide_adjusts_exclusive_zone_and_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        // SAFETY: tests in this module run in one process; nothing else reads it concurrently.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.path()) };
+        let config = Config::new("io.github.jayuda.CosmicMacosTestAutohide", 1).unwrap();
+
+        let enable = Options {
+            autohide: Some(true),
+            ..Options::default()
+        };
+        let changes = panel_changes(&config, &enable, vec![]);
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.key == "exclusive_zone" && c.desired == "false")
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.key == "autohide" && c.desired == "OnOverlap")
+        );
+
+        let disable = Options {
+            autohide: Some(false),
+            ..Options::default()
+        };
+        let changes = panel_changes(&config, &disable, vec![]);
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.key == "exclusive_zone" && c.desired == "true")
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.key == "autohide" && c.desired == "Never")
         );
     }
 }
